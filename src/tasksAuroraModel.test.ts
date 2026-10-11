@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { executeToolCall, formatToolResult } from './tools.js'
-import { readTaskLists, resetAuroraClientForTests } from './auroraClient.js'
+import { getTaskProps, readTaskLists, resetAuroraClientForTests, updateTaskProps } from './auroraClient.js'
 import {
   BUILTIN_TASK_STATUSES,
   isCompletedTaskStatus,
@@ -305,6 +305,95 @@ test('create_task resolves a new list by name, writes task_list_id as text and a
     assert.equal(props['task_list_id']?.value_ref ?? null, null)
     assert.equal(props['status']?.value_text, 'In Progress')
   })
+})
+
+// ── Assignees and labels in Aurora's format ─────────────────────────────────
+
+test('assignees and labels are read from the app format and from older MCP JSON', async () => {
+  const cloud = new FakeCloud()
+  cloud.object('task-app', 'task', 'Set by the app')
+  cloud.prop('task-app', 'assignee', { value_text: 'user-a, user-b' })
+  cloud.prop('task-app', 'tags', { value_text: 'urgent,client' })
+  cloud.prop('task-app', 'labels', { value_text: 'old-label' })
+  cloud.object('task-mcp', 'task', 'Set by an older MCP')
+  cloud.prop('task-mcp', 'assignees', { value_text: '["user-c"]' })
+  cloud.prop('task-mcp', 'labels', { value_text: '["legacy","urgent"]' })
+  await withCloud(cloud, async () => {
+    const app = await getTaskProps('task-app', WS)
+    assert.deepEqual(app.assignees, ['user-a', 'user-b'])
+    assert.deepEqual(app.labels, ['urgent', 'client', 'old-label'])
+    const mcp = await getTaskProps('task-mcp', WS)
+    assert.deepEqual(mcp.assignees, ['user-c'])
+    assert.deepEqual(mcp.labels, ['legacy', 'urgent'])
+  })
+})
+
+test('assignees and labels are written as Aurora writes them: assignee and tags as comma-separated text', async () => {
+  const cloud = new FakeCloud()
+  cloud.object('task-1', 'task', 'Write report')
+  await withCloud(cloud, async () => {
+    await updateTaskProps('task-1', WS, { assignees: ['user-a', ' user-b ', 'user-a'], labels: ['urgent', 'client', 'urgent', ''] })
+  })
+  const props = cloud.propsOf('task-1')
+  assert.equal(props['assignee']?.value_type, 'text')
+  assert.equal(props['assignee']?.value_text, 'user-a,user-b')
+  assert.equal(props['tags']?.value_type, 'text')
+  assert.equal(props['tags']?.value_text, 'urgent,client')
+  assert.equal(props['assignees'], undefined)
+  assert.equal(props['labels'], undefined)
+})
+
+test('writing replaces older MCP JSON values so the app sees them, and empty lists clear', async () => {
+  const cloud = new FakeCloud()
+  cloud.object('task-1', 'task', 'Write report')
+  cloud.prop('task-1', 'assignees', { value_text: '["user-c"]' })
+  cloud.prop('task-1', 'labels', { value_text: '["legacy"]' })
+  cloud.prop('task-1', 'tags', { value_text: 'kept' })
+  await withCloud(cloud, async () => {
+    await updateTaskProps('task-1', WS, { assignees: ['user-a'], labels: ['fresh'] })
+    let props = cloud.propsOf('task-1')
+    assert.equal(props['assignee']?.value_text, 'user-a')
+    assert.equal(props['assignees']?.value_text, null)
+    assert.equal(props['tags']?.value_text, 'fresh')
+    assert.equal(props['labels']?.value_text, null)
+    assert.deepEqual((await getTaskProps('task-1', WS)).labels, ['fresh'])
+
+    await updateTaskProps('task-1', WS, { assignees: [], labels: [] })
+    props = cloud.propsOf('task-1')
+    assert.equal(props['assignee']?.value_text, null)
+    assert.equal(props['tags']?.value_text, null)
+    const read = await getTaskProps('task-1', WS)
+    assert.deepEqual(read.assignees, [])
+    assert.deepEqual(read.labels, [])
+  })
+})
+
+test('any later write to a task moves older MCP JSON assignees and labels into the app format', async () => {
+  const cloud = new FakeCloud()
+  cloud.object('task-1', 'task', 'Write report')
+  cloud.prop('task-1', 'assignees', { value_text: '["user-c","user-d"]' })
+  cloud.prop('task-1', 'labels', { value_text: '["legacy"]' })
+  cloud.prop('task-1', 'tags', { value_text: 'urgent' })
+  await withCloud(cloud, async () => {
+    await updateTaskProps('task-1', WS, { priority: 'high' })
+  })
+  const props = cloud.propsOf('task-1')
+  assert.equal(props['priority']?.value_text, 'high')
+  assert.equal(props['assignee']?.value_text, 'user-c,user-d')
+  assert.equal(props['assignees']?.value_text, null)
+  assert.equal(props['tags']?.value_text, 'urgent,legacy')
+  assert.equal(props['labels']?.value_text, null)
+})
+
+test('the app\'s own comma-separated labels are left in place when they are not being changed', async () => {
+  const cloud = new FakeCloud()
+  cloud.object('task-1', 'task', 'Write report')
+  cloud.prop('task-1', 'labels', { value_text: 'from-app' })
+  await withCloud(cloud, async () => {
+    await updateTaskProps('task-1', WS, { priority: 'low' })
+  })
+  assert.equal(cloud.propsOf('task-1')['labels']?.value_text, 'from-app')
+  assert.equal(cloud.propsOf('task-1')['tags'], undefined)
 })
 
 // ── Recurring tasks (#39) ────────────────────────────────────────────────────
