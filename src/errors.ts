@@ -61,6 +61,18 @@ function specificApiError(error: AuroraApiError): ToolErrorResult | null {
   return null
 }
 
+/**
+ * The one line printed when authentication fails at startup. Only an
+ * unconfirmed email address gets its own fixed text; anything else stays
+ * generic so no upstream detail reaches the log.
+ */
+export function startupAuthFailureMessage(error: unknown): string {
+  if (error instanceof AuroraApiError && error.status === 403 && error.code === EMAIL_VERIFICATION_REQUIRED_CODE) {
+    return `Aurora MCP authentication failed. ${EMAIL_VERIFICATION_REQUIRED_MESSAGE}`
+  }
+  return 'Aurora MCP authentication failed.'
+}
+
 function apiErrorCode(error: AuroraApiError): ToolErrorCode {
   if (error.status === 0) return 'network_error'
   if (error.status === 400 || error.status === 422) return 'invalid_input'

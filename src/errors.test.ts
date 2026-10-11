@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { AuroraApiError, toSafeToolError } from './errors.js'
+import { AuroraApiError, startupAuthFailureMessage, toSafeToolError } from './errors.js'
 
 test('429 preserves a retryable MCP error without leaking the response body', () => {
   const result = toSafeToolError(new AuroraApiError(429, 'rate_limited', 'private upstream body', 12))
@@ -122,4 +122,13 @@ test('410 Gone is a non-retryable retired-resource error', () => {
   assert.equal(result.retryable, false)
   assert.match(result.message, /no longer available/i)
   assert.doesNotMatch(result.message, /Task lists are now stored/)
+})
+
+test('startup explains an unconfirmed email and stays generic otherwise', () => {
+  assert.match(
+    startupAuthFailureMessage(new AuroraApiError(403, 'email_verification_required', 'private person@example.com')),
+    /^Aurora MCP authentication failed\. Confirm your email address/,
+  )
+  assert.equal(startupAuthFailureMessage(new AuroraApiError(401, null, 'private')), 'Aurora MCP authentication failed.')
+  assert.equal(startupAuthFailureMessage(new Error('private detail')), 'Aurora MCP authentication failed.')
 })
