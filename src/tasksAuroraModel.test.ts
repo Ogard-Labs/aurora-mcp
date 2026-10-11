@@ -385,6 +385,33 @@ test('any later write to a task moves older MCP JSON assignees and labels into t
   assert.equal(props['labels']?.value_text, null)
 })
 
+test('a current assignee set in the app wins over a stale older MCP value, which is only cleared', async () => {
+  const cloud = new FakeCloud()
+  cloud.object('task-1', 'task', 'Write report')
+  cloud.prop('task-1', 'assignees', { value_text: '["user-a"]' })
+  cloud.prop('task-1', 'assignee', { value_text: 'user-b' })
+  await withCloud(cloud, async () => {
+    assert.deepEqual((await getTaskProps('task-1', WS)).assignees, ['user-b'])
+    await updateTaskProps('task-1', WS, { priority: 'high' })
+    const props = cloud.propsOf('task-1')
+    assert.equal(props['assignee']?.value_text, 'user-b')
+    assert.equal(props['assignees']?.value_text, null)
+  })
+})
+
+test('encrypted tags are not mixed with older MCP labels on an unrelated write', async () => {
+  const cloud = new FakeCloud()
+  cloud.object('task-1', 'task', 'Write report')
+  cloud.prop('task-1', 'tags', { value_text: '__e2ee__ciphertext' })
+  cloud.prop('task-1', 'labels', { value_text: '["legacy"]' })
+  await withCloud(cloud, async () => {
+    await updateTaskProps('task-1', WS, { priority: 'high' })
+  })
+  const props = cloud.propsOf('task-1')
+  assert.equal(props['tags']?.value_text, '__e2ee__ciphertext')
+  assert.equal(props['labels']?.value_text, '["legacy"]')
+})
+
 test('the app\'s own comma-separated labels are left in place when they are not being changed', async () => {
   const cloud = new FakeCloud()
   cloud.object('task-1', 'task', 'Write report')

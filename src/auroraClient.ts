@@ -1179,9 +1179,7 @@ function propsToTaskProps(props: AuroraPropertyRecord[], objectId: string): Auro
     status: get('status')?.value_text ?? null,
     priority: get('priority')?.value_text ?? null,
     due_date: get('due_date')?.value_date ?? get('due_date')?.value_text ?? null,
-    // Aurora keeps assignee user ids comma-separated in `assignee`; older MCP
-    // versions wrote a JSON array under `assignees`, which is still read.
-    assignees: parseTaskListProperty(get('assignee')?.value_text, get('assignees')?.value_text),
+    assignees: taskAssignees(get('assignee')?.value_text, get('assignees')?.value_text),
     labels: parseTaskListProperty(get('tags')?.value_text, get('labels')?.value_text),
     description: get('description')?.value_text ?? null,
     task_list_id: get('task_list_id')?.value_text ?? get('task_list_id')?.value_ref ?? null,
@@ -1205,6 +1203,17 @@ export function parseTaskListProperty(...values: Array<string | null | undefined
     items.push(...raw.split(',').map((entry) => entry.trim()).filter(Boolean))
   }
   return [...new Set(items)]
+}
+
+/**
+ * Assignee user ids. Aurora keeps them comma-separated in `assignee`, and that
+ * value wins: older MCP versions wrote a JSON array under `assignees`, which is
+ * only used when `assignee` is empty, so a reassignment made in the app is
+ * never undone by a stale MCP value.
+ */
+export function taskAssignees(assignee: string | null | undefined, legacyAssignees: string | null | undefined): string[] {
+  const current = parseTaskListProperty(assignee)
+  return current.length ? current : parseTaskListProperty(legacyAssignees)
 }
 
 export async function updateTaskProps(
@@ -1255,15 +1264,20 @@ export async function updateTaskProps(
   const legacyAssignees = recordByKey.get('assignees')?.value_text
   const assignees = patch.assignees !== undefined
     ? normalizeTaskList(patch.assignees)
-    : legacyAssignees ? parseTaskListProperty(recordByKey.get('assignee')?.value_text, legacyAssignees) : null
+    : legacyAssignees ? taskAssignees(recordByKey.get('assignee')?.value_text, legacyAssignees) : null
   if (assignees) {
     triples.push({ key: 'assignee', valueType: 'text', value: assignees.length ? assignees.join(',') : null })
     if (legacyAssignees) triples.push({ key: 'assignees', valueType: 'text', value: null })
   }
   const legacyLabels = recordByKey.get('labels')?.value_text
+  const currentTags = recordByKey.get('tags')?.value_text
+  // Older MCP JSON labels are merged into `tags`, as both the app and the MCP
+  // read the two keys together, unless `tags` is end-to-end encrypted (left to the app).
   const labels = patch.labels !== undefined
     ? normalizeTaskList(patch.labels)
-    : legacyLabels?.trim().startsWith('[') ? parseTaskListProperty(recordByKey.get('tags')?.value_text, legacyLabels) : null
+    : legacyLabels?.trim().startsWith('[') && !isEncryptedMetadataValue(currentTags)
+      ? parseTaskListProperty(currentTags, legacyLabels)
+      : null
   if (labels) {
     triples.push({ key: 'tags', valueType: 'text', value: labels.length ? labels.join(',') : null })
     if (legacyLabels) triples.push({ key: 'labels', valueType: 'text', value: null })
