@@ -330,9 +330,10 @@ export async function listVisibleObjects(
 ): Promise<AuroraObjectRecord[]> {
   if (type && isHiddenSystemObjectType(type)) throw new ToolInputError(`${type} objects are internal to Aurora and cannot be listed`)
   const output: AuroraObjectRecord[] = []
-  const maxPages = options.maxPages ?? 10
+  // Full pages, so a run of hidden rows cannot exhaust the page budget for a small limit.
+  const maxPages = options.maxPages ?? 20
   for (let page = 1; page <= maxPages && output.length < limit; page += 1) {
-    const result = await listObjectsPage(workspaceId, type, page, limit, { excludeTemplates: options.excludeTemplates })
+    const result = await listObjectsPage(workspaceId, type, page, 50, { excludeTemplates: options.excludeTemplates })
     output.push(...result.items)
     if (!result.totalPages || page >= result.totalPages) break
   }
@@ -1295,6 +1296,8 @@ function normalizeWorkspaceKnowledgeResponse(
     ? payload.items
         .map((item) => normalizeWorkspaceKnowledgeSource(item))
         .filter((item): item is WorkspaceKnowledgeSource => item !== null)
+        // Hidden system objects are never knowledge, whichever wiki tool asked.
+        .filter((item) => !isHiddenSystemObjectType(item.objectType))
     : []
   return {
     workspaceId: typeof payload?.workspaceId === 'string' ? payload.workspaceId : '',

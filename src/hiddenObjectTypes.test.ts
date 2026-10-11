@@ -90,7 +90,7 @@ test('list_objects and list_recent leave out hidden system objects without losin
       assert.deepEqual(result.objects.map((item) => item.id), ['page-1', 'page-2', 'page-3'], tool)
     }
   })
-  assert.ok(requests.every((url) => url.searchParams.get('perPage') === '3'))
+  assert.ok(requests.every((url) => url.searchParams.get('perPage') === '50'))
 })
 
 test('listObjectsPage drops hidden rows unless the type asks for them', async () => {
@@ -131,6 +131,45 @@ test('get_object and write tools treat hidden objects as not found', async () =>
     assert.equal((await getObject('list', 'workspace-1', { includeHidden: true }))?.type, 'task_list')
   })
   assert.deepEqual(writes, [])
+})
+
+test('a long run of hidden rows does not starve a small limit', async () => {
+  const pages = 15
+  await withServer((_req, res, url) => {
+    const page = Number(url.searchParams.get('page') ?? '1')
+    const items = page < pages
+      ? Array.from({ length: 50 }, (_, index) => record(`list-${page}-${index}`, 'task_list'))
+      : [record('page-late', 'page')]
+    res.end(JSON.stringify({ items, page, perPage: 50, totalPages: pages, totalItems: (pages - 1) * 50 + 1 }))
+  }, async () => {
+    const result = await executeToolCall('list_recent', { limit: 1 }, 'workspace-1') as { objects: Array<{ id: string }> }
+    assert.deepEqual(result.objects.map((item) => item.id), ['page-late'])
+  })
+})
+
+test('every wiki tool drops hidden system objects', async () => {
+  const items = [
+    { workspaceId: 'workspace-1', objectId: 'cfg', objectType: 'workspace_config', title: null, deepLink: '/object/cfg' },
+    { workspaceId: 'workspace-1', objectId: 'page-1', objectType: 'page', title: 'Page', deepLink: '/object/page-1' },
+  ]
+  await withServer((_req, res, url) => {
+    if (url.pathname.endsWith('/objects/cfg')) {
+      res.end(JSON.stringify({ workspaceId: 'workspace-1', items: [items[0]] }))
+      return
+    }
+    res.end(JSON.stringify({ workspaceId: 'workspace-1', query: 'x', limit: 10, items }))
+  }, async () => {
+    for (const [tool, input] of [
+      ['wiki_search', { query: 'x' }],
+      ['wiki_recent', {}],
+      ['wiki_related', { id: 'page-1' }],
+    ] as const) {
+      const result = await executeToolCall(tool, input, 'workspace-1') as { sources: Array<{ objectId: string }> }
+      assert.deepEqual(result.sources.map((source) => source.objectId), ['page-1'], tool)
+    }
+    const page = await executeToolCall('wiki_get_page', { id: 'cfg', includeFullText: true }, 'workspace-1') as { code?: string }
+    assert.equal(page.code, 'not_found')
+  })
 })
 
 test('search results drop hidden system objects', async () => {
