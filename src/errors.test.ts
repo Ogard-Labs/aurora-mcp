@@ -88,3 +88,38 @@ test('upstream invalid-input failures use fixed public text', () => {
     retryable: false,
   })
 })
+
+test('403 email_verification_required tells the user to confirm their email', () => {
+  const result = toSafeToolError(new AuroraApiError(403, 'email_verification_required', 'private person@example.com'))
+
+  assert.equal(result.code, 'authentication_failed')
+  assert.equal(result.retryable, false)
+  assert.match(result.message, /confirm your email/i)
+  assert.doesNotMatch(result.message, /person@example\.com/)
+})
+
+test('403 write_refused says the role does not allow writing', () => {
+  const result = toSafeToolError(new AuroraApiError(403, 'write_refused', 'Viewer role cannot modify objects.'))
+
+  assert.equal(result.code, 'permission_denied')
+  assert.equal(result.retryable, false)
+  assert.match(result.message, /role in this workspace does not allow/i)
+})
+
+test('a plain 403 keeps the generic permission message', () => {
+  assert.deepEqual(toSafeToolError(new AuroraApiError(403, null, 'private')), {
+    type: 'error',
+    code: 'permission_denied',
+    message: 'AuroraCloud denied access to this resource.',
+    retryable: false,
+  })
+})
+
+test('410 Gone is a non-retryable retired-resource error', () => {
+  const result = toSafeToolError(new AuroraApiError(410, null, 'Task lists are now stored as workspace objects.'))
+
+  assert.equal(result.code, 'not_found')
+  assert.equal(result.retryable, false)
+  assert.match(result.message, /no longer available/i)
+  assert.doesNotMatch(result.message, /Task lists are now stored/)
+})
