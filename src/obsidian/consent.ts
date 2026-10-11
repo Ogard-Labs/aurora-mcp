@@ -1,3 +1,5 @@
+import type { ElicitRequestFormParams } from '@modelcontextprotocol/server'
+
 export type ObsidianConsentPreview = {
   planId: string
   planHash: string
@@ -31,6 +33,15 @@ export type ObsidianConsentDecision =
 
 export type ObsidianConsentRequest = (preview: ObsidianConsentPreview) => Promise<ObsidianConsentResponse>
 
+export class ObsidianElicitationRequired extends Error {
+  readonly preview: ObsidianConsentPreview
+  constructor(preview: ObsidianConsentPreview) {
+    super('Obsidian import requires form elicitation')
+    this.name = 'ObsidianElicitationRequired'
+    this.preview = preview
+  }
+}
+
 export function buildObsidianConsentElicitation(preview: ObsidianConsentPreview): ElicitRequestFormParams {
   return {
     mode: 'form',
@@ -38,7 +49,7 @@ export function buildObsidianConsentElicitation(preview: ObsidianConsentPreview)
       `Import Obsidian plan ${preview.planId} (${preview.planHash}) from ${preview.vaultDisplayName} into workspace ${preview.workspaceId}?`,
       `${preview.counts.customGroups} custom types, ${preview.counts.templates} templates, ${preview.counts.notes} notes, ${preview.counts.canvases} Canvas files, and ${preview.counts.attachments} referenced attachments are planned.`,
       `Policies: hierarchy=${preview.policies.hierarchy}, collisions=${preview.policies.collisions}, attachments=${preview.policies.attachments}, unsupported=${preview.policies.unsupported}.`,
-      'The source vault will remain read-only. AuroraDocs writes are additive and run as one resumable bounded batch.',
+      'The source vault will remain read-only. Aurora writes are additive and run as one resumable bounded batch.',
     ].join('\n'),
     requestedSchema: {
       type: 'object',
@@ -80,7 +91,8 @@ export async function decideObsidianImportConsent(input: {
   let response: ObsidianConsentResponse
   try {
     response = await input.requestConsent(input.preview)
-  } catch {
+  } catch (error) {
+    if (error instanceof ObsidianElicitationRequired) throw error
     return { outcome: 'cancelled', source: 'elicitation' }
   }
   if (response.action === 'decline') return { outcome: 'declined', source: 'elicitation' }
@@ -93,4 +105,3 @@ export async function decideObsidianImportConsent(input: {
   }
   return { outcome: 'accepted', source: 'elicitation' }
 }
-import type { ElicitRequestFormParams } from '@modelcontextprotocol/sdk/types.js'

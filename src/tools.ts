@@ -38,7 +38,13 @@ import {
   createAuroraTemplate,
   createAuroraObjectFromTemplate,
 } from './auroraClient.js'
-import type { AuroraWorkspaceMember, AuroraTaskList, AuroraTaskProps, WorkspaceKnowledgeSource } from './auroraClient.js'
+import type {
+  AuroraPropertyRecord,
+  AuroraWorkspaceMember,
+  AuroraTaskList,
+  AuroraTaskProps,
+  WorkspaceKnowledgeSource,
+} from './auroraClient.js'
 import { buildWeekPlan, normalizeCanvasContent } from './planningTools.js'
 import type { McpCanvasReadResult, McpWeekPlan } from './planningTools.js'
 import { getMcpToolCoverageAudit, getMcpWorkflowRecipes } from './toolCatalog.js'
@@ -80,10 +86,15 @@ import {
 import type { ObsidianGroupAdjustment, ObsidianImportPlanPreview } from './obsidian/importPlan.js'
 import {
   decideObsidianImportConsent,
+  ObsidianElicitationRequired,
   type ObsidianConsentPreview,
   type ObsidianConsentRequest,
 } from './obsidian/consent.js'
-import { runObsidianImportBatch, type ObsidianImportBatchResult } from './obsidian/importer.js'
+import { runObsidianImportBatch, type ObsidianImportBatchResult, type ObsidianImportProgress } from './obsidian/importer.js'
+import {
+  readCustomDatabasePlan,
+  writeCustomDatabasePlan,
+} from './customDatabasePlans.js'
 import { readImportJournal, summarizeImportJournal, type ObsidianImportStatus } from './obsidian/journal.js'
 import type { StoredObsidianImportPlan } from './obsidian/importPlan.js'
 import type {
@@ -100,7 +111,15 @@ import type {
 export type ToolResult =
   | { type: 'workspaces'; workspaces: GrantedWorkspace[] }
   | { type: 'objects'; objects: { id: string; title: string | null; type: string; icon: string | null }[] }
-  | { type: 'object'; object: { id: string; title: string | null; type: string; icon: string | null }; availability: Availability; content: string | null; properties: Record<string, string> }
+  | {
+      type: 'object'
+      object: { id: string; title: string | null; type: string; icon: string | null }
+      availability: Availability
+      content: string | null
+      properties: Record<string, string>
+      computed_properties: Record<string, McpComputedPropertyUnavailable>
+      computed_properties_status: 'complete' | 'unavailable'
+    }
   | { type: 'created'; id: string; title: string }
   | { type: 'task_created'; id: string; title: string; status: string | null; task_list_name: string | null }
   | { type: 'task_updated'; id: string; title: string; changed_fields: string[] }
@@ -138,6 +157,69 @@ export type ToolResult =
   | { type: 'no_op'; message: string }
   | ToolErrorResult
 
+export type McpComputedPropertyUnavailable = {
+  label: string
+  status: 'unavailable'
+  code: 'local_evaluation_required'
+}
+
+export function buildMcpObjectPropertyResult(input: {
+  rawProperties: readonly AuroraPropertyRecord[]
+  schema: readonly unknown[]
+  computedPropertiesStatus: 'complete' | 'unavailable'
+}): {
+  properties: Record<string, string>
+  computed_properties: Record<string, McpComputedPropertyUnavailable>
+  computed_properties_status: 'complete' | 'unavailable'
+} {
+  const computedLabels = new Map<string, string>()
+  for (const field of input.schema) {
+    if (!field || typeof field !== 'object' || Array.isArray(field)) continue
+    const record = field as Record<string, unknown>
+    const key = typeof record['key'] === 'string' ? record['key'] : ''
+    const valueType = typeof record['value_type'] === 'string' ? record['value_type'] : ''
+    if (
+      !key ||
+      (valueType !== 'formula' && valueType !== 'rollup' && !Object.hasOwn(record, 'computed'))
+    ) continue
+    computedLabels.set(
+      key,
+      typeof record['label'] === 'string' && record['label'] ? record['label'] : key,
+    )
+  }
+
+  const properties: Record<string, string> = {}
+  for (const property of input.rawProperties) {
+    if (
+      computedLabels.has(property.key)
+      || property.value_type === 'formula'
+      || property.value_type === 'rollup'
+    ) {
+      if (!computedLabels.has(property.key)) computedLabels.set(property.key, property.key)
+      continue
+    }
+    properties[property.key] =
+      property.value_text
+      ?? property.value_date
+      ?? (property.value_num != null ? String(property.value_num) : null)
+      ?? (property.value_bool != null ? String(property.value_bool) : null)
+      ?? property.value_ref
+      ?? ''
+  }
+
+  return {
+    properties,
+    computed_properties: Object.fromEntries(
+      [...computedLabels].map(([key, label]) => [key, {
+        label,
+        status: 'unavailable' as const,
+        code: 'local_evaluation_required' as const,
+      }]),
+    ),
+    computed_properties_status: input.computedPropertiesStatus,
+  }
+}
+
 export type McpToolCallResult = {
   content: [{ type: 'text'; text: string }]
   structuredContent: ToolResult
@@ -148,6 +230,8 @@ export type ToolExecutionOptions = {
   requestObsidianImportConsent?: ObsidianConsentRequest
   runObsidianImport?: (stored: StoredObsidianImportPlan, batchSize: number) => Promise<ObsidianImportBatchResult>
   now?: () => Date
+  refreshClientGrants?: () => Promise<GrantedWorkspace[]>
+  reportProgress?: (progress: ObsidianImportProgress) => void | Promise<void>
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -185,8 +269,6 @@ function notFound(message: string): ToolErrorResult {
   return { type: 'error', code: 'not_found', message, retryable: false }
 }
 
-const CUSTOM_DATABASE_PLANS = new Map<string, CustomDatabasePlan>()
-
 async function loadStoredObsidianImportPlan(
   workspaceId: string,
   planId: string,
@@ -221,19 +303,6 @@ function cloneRecipe(recipe: CustomDatabaseRecipe): CustomDatabaseRecipe {
       },
     } : {}),
   }
-}
-
-function storeCustomDatabasePlan(plan: CustomDatabasePlan): void {
-  const now = Date.now()
-  for (const [key, value] of CUSTOM_DATABASE_PLANS) {
-    if (Date.parse(value.expiresAt) <= now) CUSTOM_DATABASE_PLANS.delete(key)
-  }
-  while (CUSTOM_DATABASE_PLANS.size >= 100) {
-    const oldest = CUSTOM_DATABASE_PLANS.keys().next().value as string | undefined
-    if (!oldest) break
-    CUSTOM_DATABASE_PLANS.delete(oldest)
-  }
-  CUSTOM_DATABASE_PLANS.set(`${plan.workspaceId}:${plan.planId}`, plan)
 }
 
 function optionalPresentation(input: Record<string, unknown>, key: 'icon' | 'color'): string | null | undefined {
@@ -474,6 +543,15 @@ export function resolveWorkspace(
   return matches[0].workspaceId
 }
 
+async function refreshClientGrants(
+  context: AuroraConnectionContext,
+  options: ToolExecutionOptions,
+): Promise<void> {
+  if (context.kind !== 'client' || !options.refreshClientGrants) return
+  const workspaces = await options.refreshClientGrants()
+  context.workspaces.splice(0, context.workspaces.length, ...workspaces)
+}
+
 export async function executeToolCall(
   name: string,
   input: Record<string, unknown>,
@@ -482,12 +560,30 @@ export async function executeToolCall(
 ): Promise<ToolResult> {
   try {
     const context = normalizeConnectionContext(connection)
-    if (name === 'list_workspaces') return { type: 'workspaces', workspaces: context.workspaces }
+    if (name === 'list_workspaces') {
+      await refreshClientGrants(context, options)
+      return { type: 'workspaces', workspaces: context.workspaces }
+    }
     if (name === 'get_mcp_tool_coverage' || name === 'get_mcp_workflow_recipes' || name === 'get_custom_database_recipes') {
       return await executeToolCallUnsafe(name, input, context.kind === 'legacy_workspace' ? context.defaultWorkspaceId : '', options)
     }
-    return await executeToolCallUnsafe(name, input, resolveWorkspace(context, input), options)
+    try {
+      return await executeToolCallUnsafe(name, input, resolveWorkspace(context, input), options)
+    } catch (error) {
+      if (error instanceof ObsidianElicitationRequired) throw error
+      if (
+        !(error instanceof ToolInputError)
+        || error.message !== 'Workspace selector does not match an available grant'
+        || context.kind !== 'client'
+        || !options.refreshClientGrants
+      ) {
+        throw error
+      }
+      await refreshClientGrants(context, options)
+      return await executeToolCallUnsafe(name, input, resolveWorkspace(context, input), options)
+    }
   } catch (error) {
+    if (error instanceof ObsidianElicitationRequired) throw error
     return toSafeToolError(error)
   }
 }
@@ -584,25 +680,36 @@ async function executeToolCallUnsafe(
 
         const content = await getContent(id, workspaceId)
 
-        // Include properties
         const rawProps = await listProperties([id], workspaceId)
-        const properties: Record<string, string> = {}
-        for (const p of rawProps) {
-          properties[p.key] =
-            p.value_text
-            ?? p.value_date
-            ?? (p.value_num != null ? String(p.value_num) : null)
-            ?? (p.value_bool != null ? String(p.value_bool) : null)
-            ?? p.value_ref
-            ?? ''
+        let schema: readonly unknown[] = []
+        let computedPropertiesStatus: 'complete' | 'unavailable' = 'complete'
+        if (obj.type.startsWith('custom:')) {
+          try {
+            const typeId = obj.type.slice('custom:'.length)
+            const objectType = (await listAuroraObjectTypes(workspaceId))
+              .find((candidate) => candidate.id === typeId)
+            if (objectType) schema = objectType.schema
+            else computedPropertiesStatus = 'unavailable'
+          } catch {
+            computedPropertiesStatus = 'unavailable'
+          }
+        } else if (obj.type.startsWith('database-row:')) {
+          // Freeform schemas may exist only in a trusted client or encrypted
+          // database config; this remote server must not infer/evaluate them.
+          computedPropertiesStatus = 'unavailable'
         }
+        const propertyResult = buildMcpObjectPropertyResult({
+          rawProperties: rawProps,
+          schema,
+          computedPropertiesStatus,
+        })
 
         return {
           type: 'object',
           object: { id: obj.id, title: obj.title, type: obj.type, icon: obj.icon },
           availability: content.availability,
           content: content.text,
-          properties,
+          ...propertyResult,
         }
       }
 
@@ -697,7 +804,7 @@ async function executeToolCallUnsafe(
         if (consent.outcome !== 'accepted') {
           const message = consent.outcome === 'adjustment_required'
             ? 'Import not started. Re-analyze with the requested policy or group changes, then review the new plan.'
-            : 'Obsidian import was not approved; no AuroraDocs writes were performed.'
+            : 'Obsidian import was not approved; no Aurora writes were performed.'
           return { type: 'no_op', message }
         }
         const run = options.runObsidianImport ?? (async (approved, size) => {
@@ -706,7 +813,10 @@ async function executeToolCallUnsafe(
             throw new ToolInputError(error instanceof Error ? error.message : 'Obsidian vault authorization is unavailable')
           }
           const vault = await openAuthorizedVault(config)
-          return runObsidianImportBatch(approved, vault, config.stateDir, { batchSize: size })
+          return runObsidianImportBatch(approved, vault, config.stateDir, {
+            batchSize: size,
+            onProgress: options.reportProgress,
+          })
         })
         return { type: 'obsidian_import_batch', result: await run(stored, batchSize.value) }
       }
@@ -755,7 +865,7 @@ async function executeToolCallUnsafe(
           existingTypes: objectTypes,
           assumptions: Array.isArray(input['assumptions']) ? input['assumptions'].map((entry) => String(entry).trim()).filter(Boolean).slice(0, 20) : [],
         })
-        storeCustomDatabasePlan(plan)
+        await writeCustomDatabasePlan(plan)
         return { type: 'custom_database_plan', plan, summary: summarizeCustomDatabasePlan(plan) }
       }
 
@@ -763,7 +873,7 @@ async function executeToolCallUnsafe(
         const planId = readString(input['plan_id'])
         const planHash = readString(input['plan_hash'])
         if (!planId || !planHash) return invalidInput('Plan ID and plan hash are required')
-        const plan = CUSTOM_DATABASE_PLANS.get(`${workspaceId}:${planId}`)
+        const plan = await readCustomDatabasePlan(workspaceId, planId)
         if (!plan || plan.planHash !== planHash) return invalidInput('The custom database plan is missing, expired, or does not match the approved hash')
         const existingTypes = await listAuroraObjectTypes(workspaceId)
         const applicable = assertApplicableCustomDatabasePlan(plan, workspaceId, existingTypes)
@@ -1242,9 +1352,18 @@ export function formatToolResult(result: ToolResult): string {
       const propLines = Object.entries(result.properties)
         .map(([k, v]) => `  ${k}: ${v}`)
         .join('\n')
+      const computedLines = Object.entries(result.computed_properties)
+        .map(([key, value]) =>
+          `  ${value.label} [${key}]: unavailable (trusted local evaluation required)`,
+        )
+        .join('\n')
       return [
         `**${result.object.title ?? 'Untitled'}** (${result.object.type}, ${result.object.id})`,
         propLines ? `\nProperties:\n${propLines}` : '',
+        computedLines ? `\nComputed properties:\n${computedLines}` : '',
+        result.computed_properties_status === 'unavailable'
+          ? '\nComputed property schema/results are unavailable to this remote MCP server.'
+          : '',
         result.content
           ? `\n\n${result.content}`
           : result.availability === 'encrypted_locked'

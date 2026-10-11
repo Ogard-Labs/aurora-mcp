@@ -2,11 +2,11 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
 import { test } from 'node:test'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { Client } from '@modelcontextprotocol/client'
 import {
   getDefaultEnvironment,
   StdioClientTransport,
-} from '@modelcontextprotocol/sdk/client/stdio.js'
+} from '@modelcontextprotocol/client/stdio'
 
 const workspaceId = 'workspace-test'
 const token = 'aur_mcp_test_example'
@@ -114,7 +114,7 @@ test('authentication failure diagnostics do not expose private startup context',
       })
 
       assert.equal(result.exitCode, 1)
-      assert.equal(result.stderr, 'AuroraDocs MCP authentication failed.\n')
+      assert.equal(result.stderr, 'Aurora MCP authentication failed.\n')
       for (const secret of [privateUserId, privateWorkspaceId, privateToken, privateUpstreamText]) {
         assert.doesNotMatch(result.stderr, new RegExp(secret))
       }
@@ -303,8 +303,8 @@ test('an external stdio client can list and invoke the MCP coverage tool', async
     assert.match(membershipFilter ?? '', /workspace_id = "workspace-test"/)
     assert.match(membershipFilter ?? '', /user_id = "user-test"/)
 
-    assert.match(stderr, /AuroraDocs MCP authenticated\./)
-    assert.match(stderr, /AuroraDocs MCP server running\./)
+    assert.match(stderr, /Aurora MCP authenticated\./)
+    assert.match(stderr, /Aurora MCP server running\./)
     for (const secret of [userId, workspaceId, token, recordTitle]) {
       assert.doesNotMatch(stderr, new RegExp(secret))
     }
@@ -375,7 +375,11 @@ test('client credentials discover granted workspaces without a default workspace
     })
     const objects = await client.callTool({ name: 'list_objects', arguments: { workspace_alias: 'test-space-test', limit: 1 } })
     assert.deepEqual(objects.structuredContent, { type: 'objects', objects: [] })
-    assert.deepEqual(requests, ['/api/mcp/workspaces', '/api/collections/objects/records'])
+    assert.deepEqual(requests, [
+      '/api/mcp/workspaces',
+      '/api/mcp/workspaces',
+      '/api/collections/objects/records',
+    ])
   } finally {
     await client?.close().catch(() => undefined)
     await transport?.close().catch(() => undefined)

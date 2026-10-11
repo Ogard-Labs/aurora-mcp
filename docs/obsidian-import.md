@@ -1,10 +1,10 @@
 # Obsidian import
 
-> **Available in 0.2.1:** these tools require the published 0.2.1 package or
-> newer.
+> **Available since 0.2.1:** these tools require the published `0.3.0` package
+> or newer.
 
 The importer converts one explicitly authorized local Obsidian vault into an
-AuroraCloud-backed AuroraDocs workspace. It is analyze-first, consent-gated,
+AuroraCloud-backed Aurora workspace. It is analyze-first, consent-gated,
 additive, bounded, and resumable. It never modifies the source vault.
 
 ## Before you start
@@ -19,7 +19,7 @@ additive, bounded, and resumable. It never modifies the source vault.
    the analyzed inventory remains stable.
 
 Plaintext import into E2EE workspaces is blocked. The local MCP process has no
-AuroraDocs encryption keys and cannot make those writes safe.
+Aurora encryption keys and cannot make those writes safe.
 
 ## Authorize one source root
 
@@ -35,8 +35,10 @@ Configure the local MCP child process with:
 `AURORA_OBSIDIAN_VAULT_ROOT` is required and must be an absolute real
 directory. `AURORA_MCP_STATE_DIR` is optional and must remain outside the
 vault; by default the server uses a private `.auroradocs-mcp` directory for the
-current user. Removing the root variable disables all Obsidian tools while
-ordinary AuroraCloud tools keep working.
+current user. That directory also stores reviewable custom-database plans.
+Removing the root variable disables all Obsidian tools while ordinary
+AuroraCloud tools keep working. Import batches report progress on the
+originating tool call when the client sends a progress token.
 
 This environment setting authorizes read-only analysis only. The reader never
 scans parents or siblings, follows symlinks, runs plugins, reads `.git`, trash,
@@ -88,7 +90,7 @@ expired plan is a write-free result.
 ## Mapping behavior
 
 - Markdown headings, paragraphs, emphasis, code, links, lists, task lists,
-  quotes, fenced code, and tables map to AuroraDocs structured content.
+  quotes, fenced code, and tables map to Aurora structured content.
 - Wiki links, aliases, headings, and block references resolve against the
   analyzed vault. Under `preserve`, ambiguous, broken, or unsupported links
   remain readable text with warnings; under `skip`, their unresolved fallback

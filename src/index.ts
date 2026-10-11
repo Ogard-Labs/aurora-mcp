@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * AuroraDocs MCP Server
+ * Aurora MCP Server
  *
- * Exposes AuroraDocs workspace data to Claude Desktop and other MCP clients.
+ * Exposes Aurora workspace data to Claude Desktop and other MCP clients.
  * Uses the MCP stdio transport — add it to claude_desktop_config.json.
  *
  * SECURITY:
@@ -19,11 +19,9 @@
  *   AURORA_API_EMAIL     AuroraCloud user email (legacy/dev fallback)
  *   AURORA_API_PASSWORD  AuroraCloud user password (legacy/dev fallback)
  */
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { serveStdio } from '@modelcontextprotocol/server/stdio'
 import { authenticate } from './auroraClient.js'
 import { createAuroraMcpServer } from './server.js'
-
-// ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
   let context
@@ -33,18 +31,15 @@ async function main() {
       workspaceId: process.env['AURORA_WORKSPACE_ID'],
     })
   } catch {
-    process.stderr.write('AuroraDocs MCP authentication failed.\n')
+    process.stderr.write('Aurora MCP authentication failed.\n')
     process.exit(1)
   }
 
-  const server = createAuroraMcpServer(context)
-
-  const transport = new StdioServerTransport()
-  await server.connect(transport)
-  process.stderr.write('AuroraDocs MCP server running.\n')
+  serveStdio(() => createAuroraMcpServer(context))
+  process.stderr.write('Aurora MCP server running.\n')
 }
 
 main().catch(() => {
-  process.stderr.write('AuroraDocs MCP server failed to start.\n')
+  process.stderr.write('Aurora MCP server failed to start.\n')
   process.exit(1)
 })

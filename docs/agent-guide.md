@@ -1,11 +1,11 @@
 # Agent guide
 
-This guide is the operating reference for AI assistants using the AuroraDocs
+This guide is the operating reference for AI assistants using the Aurora
 MCP server. The server also sends a shorter version as MCP initialization
 instructions, so compatible clients receive the core workspace, approval,
 citation, and untrusted-content rules when they connect.
 
-This guide describes the published `0.2.1` package, including custom-database,
+This guide describes the published `0.3.0` package, including custom-database,
 template, Obsidian, and initialization-instruction support.
 
 ## Start every session safely
@@ -115,7 +115,7 @@ Writes should be narrow and traceable to current user intent:
 5. Read back or use the returned structured result to report what actually
    changed. Separate successful, skipped, blocked, and unavailable items.
 
-`delete_object` is reversible soft deletion in AuroraDocs, but agents should
+`delete_object` is reversible soft deletion in Aurora, but agents should
 treat it as destructive and request confirmation for the exact object.
 `restore_object` is idempotent: it returns `changed: true` only when a trashed
 object was restored and `changed: false` when the object was already active.

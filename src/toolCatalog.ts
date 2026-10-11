@@ -626,7 +626,28 @@ const RESULT_SCHEMAS: Readonly<Record<string, JsonObjectSchema[]>> = {
     availability: { type: 'string', enum: ['available', 'empty', 'encrypted_locked', 'permission_denied', 'not_found', 'unavailable'] },
     content: nullableStringSchema,
     properties: { type: 'object', additionalProperties: stringSchema },
-  }, ['object', 'availability', 'content', 'properties'])],
+    computed_properties: {
+      type: 'object',
+      additionalProperties: {
+        type: 'object',
+        properties: {
+          label: stringSchema,
+          status: { const: 'unavailable' },
+          code: { const: 'local_evaluation_required' },
+        },
+        required: ['label', 'status', 'code'],
+        additionalProperties: false,
+      },
+    },
+    computed_properties_status: { type: 'string', enum: ['complete', 'unavailable'] },
+  }, [
+    'object',
+    'availability',
+    'content',
+    'properties',
+    'computed_properties',
+    'computed_properties_status',
+  ])],
   list_workspace_members: [resultSchema('members', {
     members: {
       type: 'array',
@@ -760,7 +781,7 @@ type McpToolDeclaration = Omit<McpToolDefinition, 'title' | 'outputSchema' | 'an
 const TOOL_DEFINITIONS: McpToolDeclaration[] = [
   {
     name: 'list_workspaces',
-    description: 'List only the AuroraDocs workspaces granted to this MCP credential.',
+    description: 'List only the Aurora workspaces granted to this MCP credential.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -885,7 +906,7 @@ const TOOL_DEFINITIONS: McpToolDeclaration[] = [
   },
   {
     name: 'list_week_plan',
-    description: 'Return the AuroraDocs Week Planning view for a Monday-start week, including scheduled and optionally unscheduled tasks. Tasks are capped at the 500 most recently updated.',
+    description: 'Return the Aurora Week Planning view for a Monday-start week, including scheduled and optionally unscheduled tasks. Tasks are capped at the 500 most recently updated.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -925,7 +946,7 @@ const TOOL_DEFINITIONS: McpToolDeclaration[] = [
   },
   {
     name: 'get_mcp_tool_coverage',
-    description: 'Return AuroraDocs MCP tool coverage areas, implemented tools, and prioritized gaps.',
+    description: 'Return Aurora MCP tool coverage areas, implemented tools, and prioritized gaps.',
     inputSchema: { type: 'object', properties: {} },
   },
   {

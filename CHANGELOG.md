@@ -4,7 +4,39 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
-## [0.2.1] - 2026-07-20
+### Changed
+
+- Renamed the product to Aurora in descriptions, diagnostics, the desktop
+  extension display name and the docs. Connection examples and the desktop
+  extension default now use `https://api.aurora.ink`; configurations using
+  `https://api.auroradocs.eu` keep working. The npm package, `aurora-mcp`
+  executable, extension name, server identity and state directory are unchanged.
+- The security and conduct contact is now `contact@aurora.ink`.
+
+## [0.3.0] - 2026-09-05
+
+### Added
+
+- Speak MCP revision 2026-07-28 on stdio while still serving 2025-era clients
+  from the same process.
+- Persist custom-database plans in `AURORA_MCP_STATE_DIR` so apply survives an
+  MCP process restart. Malformed apply `plan_id` values are non-retryable
+  `invalid_input`, not internal failures.
+- Re-fetch client workspace grants on `list_workspaces` and when a selector
+  misses the in-process snapshot.
+- Report Obsidian import progress on the originating tool call when the client
+  sends a progress token.
+- Ship a Claude Desktop `.mcpb` manifest and `pnpm pack:mcpb` packager.
+
+### Changed
+
+- Replaced `@modelcontextprotocol/sdk` 1.x with the v2 `@modelcontextprotocol/server`
+  package and `serveStdio`.
+- Obsidian import consent now uses Multi Round-Trip Requests (`input_required`)
+  on 2026 clients. 2025 form elicitation is served by the SDK shim. Clients
+  that advertise no elicitation still use `confirmed: true`.
+
+## [0.2.1] - 2026-08-17
 
 ### Added
 
@@ -36,9 +68,21 @@ All notable changes to this project are documented in this file.
 - Documented and contract-tested the release gate that requires a package/tag
   version match and creates the npm package and GitHub Release from the same
   tag.
+- Updated the MCP SDK to 1.30.0 and refreshed its patched production
+  transitive dependencies so the Node 20/22 CI audit is clean.
+- `get_object` no longer returns legacy stored formula/rollup display strings,
+  including scalar-mislabeled shadows whose keys are known-computed from the
+  custom-type schema. Known computed fields are reported as unavailable because
+  the remote MCP server cannot run AuroraDocs' trusted local evaluator;
+  freeform database rows also expose an explicit incomplete computed-schema
+  status.
 
 ### Fixed
 
+- Kept client-grant object, content, and property operations workspace-scoped,
+  treated the API's missing-record workspace response as a safe absent object,
+  and made resumable Obsidian content upserts work with the documented
+  least-privilege import scopes.
 - Hardened Obsidian import prerequisites and recovery: failed custom types or
   parent containers no longer downgrade or flatten entries, failed entries no
   longer strand later batches, attachment failures remain retryable and prevent
@@ -68,6 +112,8 @@ All notable changes to this project are documented in this file.
 
 ### Security
 
+- Resolved audited transitive `fast-uri` host-confusion and Hono static-server
+  path-traversal advisories in the production dependency graph.
 - Obsidian access requires one explicit absolute root, stays read-only, rejects
   symlinks/traversal/root replacement, performs no external fetches, and fails
   closed before AuroraCloud writes on stale plans, missing scopes, viewer role,
