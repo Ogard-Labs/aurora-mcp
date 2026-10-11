@@ -1208,8 +1208,10 @@ export function parseTaskListProperty(...values: Array<string | null | undefined
 /**
  * Assignee user ids. Aurora keeps them comma-separated in `assignee`, and that
  * value wins: older MCP versions wrote a JSON array under `assignees`, which is
- * only used when `assignee` is empty, so a reassignment made in the app is
- * never undone by a stale MCP value.
+ * only shown when `assignee` is empty, so a reassignment made in the app is
+ * never hidden by a stale MCP value. It is never copied into `assignee` on its
+ * own: an empty `assignee` may be the app clearing everyone (Aurora deletes the
+ * row, leaving no trace), so only an explicit assignee change replaces it.
  */
 export function taskAssignees(assignee: string | null | undefined, legacyAssignees: string | null | undefined): string[] {
   const current = parseTaskListProperty(assignee)
@@ -1258,16 +1260,14 @@ export async function updateTaskProps(
 
   // Assignees and labels in Aurora's format (auroradocs tasks.ts
   // `writeTaskMetadata`): user ids comma-separated in `assignee`, labels
-  // comma-separated in `tags`, and the legacy `labels` key emptied. Values an
-  // older MCP wrote as JSON (`assignees`, JSON `labels`) are moved over on the
-  // next write to the task, so the app sees them.
-  const legacyAssignees = recordByKey.get('assignees')?.value_text
-  const assignees = patch.assignees !== undefined
-    ? normalizeTaskList(patch.assignees)
-    : legacyAssignees ? taskAssignees(recordByKey.get('assignee')?.value_text, legacyAssignees) : null
-  if (assignees) {
+  // comma-separated in `tags`, and the legacy `labels` key emptied. JSON
+  // `labels` from an older MCP are moved into `tags` on the next write to the
+  // task, so the app reads them properly. Older MCP `assignees` are replaced
+  // when assignees are next set (see `taskAssignees` for why not sooner).
+  if (patch.assignees !== undefined) {
+    const assignees = normalizeTaskList(patch.assignees)
     triples.push({ key: 'assignee', valueType: 'text', value: assignees.length ? assignees.join(',') : null })
-    if (legacyAssignees) triples.push({ key: 'assignees', valueType: 'text', value: null })
+    if (recordByKey.get('assignees')?.value_text) triples.push({ key: 'assignees', valueType: 'text', value: null })
   }
   const legacyLabels = recordByKey.get('labels')?.value_text
   const currentTags = recordByKey.get('tags')?.value_text

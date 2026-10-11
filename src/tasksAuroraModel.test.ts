@@ -368,10 +368,9 @@ test('writing replaces older MCP JSON values so the app sees them, and empty lis
   })
 })
 
-test('any later write to a task moves older MCP JSON assignees and labels into the app format', async () => {
+test('any later write to a task moves older MCP JSON labels into tags', async () => {
   const cloud = new FakeCloud()
   cloud.object('task-1', 'task', 'Write report')
-  cloud.prop('task-1', 'assignees', { value_text: '["user-c","user-d"]' })
   cloud.prop('task-1', 'labels', { value_text: '["legacy"]' })
   cloud.prop('task-1', 'tags', { value_text: 'urgent' })
   await withCloud(cloud, async () => {
@@ -379,13 +378,26 @@ test('any later write to a task moves older MCP JSON assignees and labels into t
   })
   const props = cloud.propsOf('task-1')
   assert.equal(props['priority']?.value_text, 'high')
-  assert.equal(props['assignee']?.value_text, 'user-c,user-d')
-  assert.equal(props['assignees']?.value_text, null)
   assert.equal(props['tags']?.value_text, 'urgent,legacy')
   assert.equal(props['labels']?.value_text, null)
 })
 
-test('a current assignee set in the app wins over a stale older MCP value, which is only cleared', async () => {
+test('older MCP assignees are shown while assignee is empty but never copied back on an unrelated write', async () => {
+  // An empty `assignee` may be the app clearing everyone; restoring the old
+  // value would undo that.
+  const cloud = new FakeCloud()
+  cloud.object('task-1', 'task', 'Write report')
+  cloud.prop('task-1', 'assignees', { value_text: '["user-c","user-d"]' })
+  await withCloud(cloud, async () => {
+    assert.deepEqual((await getTaskProps('task-1', WS)).assignees, ['user-c', 'user-d'])
+    await updateTaskProps('task-1', WS, { priority: 'high' })
+  })
+  const props = cloud.propsOf('task-1')
+  assert.equal(props['assignee'], undefined)
+  assert.equal(props['assignees']?.value_text, '["user-c","user-d"]')
+})
+
+test('a current assignee set in the app wins over a stale older MCP value', async () => {
   const cloud = new FakeCloud()
   cloud.object('task-1', 'task', 'Write report')
   cloud.prop('task-1', 'assignees', { value_text: '["user-a"]' })
@@ -393,9 +405,10 @@ test('a current assignee set in the app wins over a stale older MCP value, which
   await withCloud(cloud, async () => {
     assert.deepEqual((await getTaskProps('task-1', WS)).assignees, ['user-b'])
     await updateTaskProps('task-1', WS, { priority: 'high' })
-    const props = cloud.propsOf('task-1')
-    assert.equal(props['assignee']?.value_text, 'user-b')
-    assert.equal(props['assignees']?.value_text, null)
+    assert.equal(cloud.propsOf('task-1')['assignee']?.value_text, 'user-b')
+    await updateTaskProps('task-1', WS, { assignees: ['user-b', 'user-e'] })
+    assert.equal(cloud.propsOf('task-1')['assignee']?.value_text, 'user-b,user-e')
+    assert.equal(cloud.propsOf('task-1')['assignees']?.value_text, null)
   })
 })
 
