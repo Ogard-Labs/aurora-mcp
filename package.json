@@ -46,12 +46,12 @@
     "auroracloud-live-smoke": "tsx scripts/auroracloudLiveSmoke.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.3.0",
     "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "^2.0.0",
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.6.4",
     "tsx": "^4.23.15",
     "typescript": "~7.0.2"
   },
