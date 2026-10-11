@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { executeToolCall } from './tools.js'
+import { executeToolCall, formatToolResult } from './tools.js'
 import { readTaskLists, resetAuroraClientForTests } from './auroraClient.js'
 import {
   BUILTIN_TASK_STATUSES,
@@ -376,10 +376,12 @@ test('completing a recurring task creates the next occurrence, records it and st
   })
 })
 
-test('an occurrence the app already created is left alone and nothing is duplicated', async () => {
+test('an occurrence the app already created and recorded is left alone and nothing is duplicated', async () => {
   const cloud = new FakeCloud()
   seedRecurring(cloud)
   const successorId = recurrenceSuccessorId('task-1', '2026-10-12')
+  // The app completed the task: its marker arrived, the rule removal has not yet.
+  cloud.prop('task-1', 'recurrence_next', { value_text: JSON.stringify({ id: successorId, date: '2026-10-12', rule: 'FREQ=DAILY', fp: 'abc', state: 'live' }) })
   cloud.object(successorId, 'task', 'Water plants (edited)')
   cloud.prop(successorId, 'status', { value_type: 'select', value_text: 'In Progress' })
   await withCloud(cloud, async () => {
@@ -393,6 +395,7 @@ test('an occurrence the app already created is left alone and nothing is duplica
   assert.equal(cloud.objects.get(successorId)?.['title'], 'Water plants (edited)')
   assert.equal(cloud.propsOf(successorId)['status']?.value_text, 'In Progress')
   assert.equal(Object.keys(cloud.propsOf(successorId)).length, 1)
+  assert.equal(JSON.parse(String(cloud.propsOf('task-1')['recurrence_next']?.value_text)).fp, 'abc')
 })
 
 test('a custom done status completes the task, and the new occurrence starts in the first open status', async () => {
@@ -427,4 +430,38 @@ test('an encrypted recurring task is completed but its series is left to the app
     assert.match(result.note ?? '', /end-to-end encrypted/)
   })
   assert.equal(cloud.writes.filter((write) => write.startsWith('POST /api/collections/objects')).length, 0)
+})
+
+test('a successor left half-written by an interrupted completion is finished without overwriting what is set', async () => {
+  const cloud = new FakeCloud()
+  seedRecurring(cloud)
+  const successorId = recurrenceSuccessorId('task-1', '2026-10-12')
+  // An earlier attempt created the object and its status, then failed.
+  cloud.object(successorId, 'task', 'Water plants')
+  cloud.prop(successorId, 'status', { value_type: 'select', value_text: 'In Progress' })
+  await withCloud(cloud, async () => {
+    const result = await executeToolCall('update_task', { id: 'task-1', status: 'Done' }, WS) as { next_occurrence?: { created: boolean } }
+    assert.equal(result.next_occurrence?.created, false)
+  })
+  const props = cloud.propsOf(successorId)
+  assert.equal(props['status']?.value_text, 'In Progress')
+  assert.equal(props['due_date']?.value_date, '2026-10-12T08:00')
+  assert.equal(props['recurrence']?.value_text, 'FREQ=DAILY')
+  assert.equal(props['task_list_id']?.value_text, 'list-home')
+  assert.equal(cloud.props.filter((prop) => prop.object_id === successorId && prop.key === 'status').length, 1)
+})
+
+test('text results carry the next occurrence and encryption notes', () => {
+  assert.equal(formatToolResult({
+    type: 'task_updated', id: 't', title: 'T', changed_fields: ['status'],
+    next_occurrence: { id: 'n', due_date: '2026-10-12', created: true },
+  }), 'Task updated: "T" (t) — changed: status\nNext occurrence created: n due 2026-10-12')
+  assert.match(formatToolResult({
+    type: 'task_updated', id: 't', title: 'T', changed_fields: ['status'], note: 'encrypted series',
+  }), /Note: encrypted series/)
+  assert.match(formatToolResult({ type: 'task_lists', task_lists: [], encrypted_lists: 2, note: '2 encrypted' }), /No readable task lists found\.\nNote: 2 encrypted/)
+  assert.equal(formatToolResult({
+    type: 'task_statuses', statuses: ['Todo', 'Done'], source: 'builtin',
+    status_definitions: [{ id: 'Todo', group: 'todo' }, { id: 'Done', group: 'done' }],
+  }), 'Todo (todo), Done (done)')
 })

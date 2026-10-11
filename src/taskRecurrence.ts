@@ -14,9 +14,10 @@
  * - the completed task records which occurrence it created (`recurrence_next`)
  *   and loses its rule, so completing it again does not spawn another.
  *
- * An existing occurrence (created elsewhere, edited or deleted since) is never
- * touched. The marker carries no fingerprint, so the app's "undo completion"
- * keeps an occurrence created here instead of removing it.
+ * An existing occurrence (created elsewhere, edited or deleted since) keeps
+ * every value it has; only an unfinished completion has its missing defaults
+ * filled in. The marker written here carries no fingerprint, so the app's
+ * "undo completion" keeps an occurrence created here instead of removing it.
  */
 import { createHash } from 'node:crypto'
 import {
@@ -116,6 +117,17 @@ function successorDefaults(props: AuroraPropertyRecord[], status: string, dueDat
   return writes
 }
 
+/** Whether the source's `recurrence_next` marker already records this occurrence. */
+function markerNames(props: AuroraPropertyRecord[], successorId: string): boolean {
+  const raw = props.find((prop) => prop.key === 'recurrence_next')?.value_text
+  if (!raw) return false
+  try {
+    return (JSON.parse(raw) as { id?: unknown }).id === successorId
+  } catch {
+    return false
+  }
+}
+
 async function writeProperty(
   objectId: string,
   existing: AuroraPropertyRecord | undefined,
@@ -172,19 +184,32 @@ export async function advanceRecurrenceChain(
     })
     kind = 'created'
   }
-  const successorProps = existing ? await listProperties([successorId], workspaceId) : []
-  // A brand-new occurrence, or one an earlier call created and could not finish
-  // (no properties at all yet), gets the defaults; anything else is kept.
-  if (!existing || (!existing.is_deleted && successorProps.length === 0)) {
-    for (const write of successorDefaults(props, openTaskStatusId(statuses), next.dueDate, rawRule)) {
-      await writeProperty(successorId, undefined, write)
+  // A brand-new occurrence gets every default. An existing one is only filled
+  // in while this completion is unfinished: the source still has its rule and
+  // no marker naming the occurrence, so an earlier attempt (here or in the app)
+  // stopped part-way. Then only the defaults it lacks are written, and nothing
+  // already set, by whoever set it, is overwritten. A deleted occurrence, or one
+  // whose completion was recorded, is left alone.
+  const defaults = successorDefaults(props, openTaskStatusId(statuses), next.dueDate, rawRule)
+  if (!existing) {
+    for (const write of defaults) await writeProperty(successorId, undefined, write)
+  } else if (!existing.is_deleted && !markerNames(props, successorId)) {
+    const present = new Set((await listProperties([successorId], workspaceId, { maxPages: 100 }))
+      .filter((prop) => prop.object_id === successorId)
+      .map((prop) => prop.key))
+    for (const write of defaults) {
+      if (!present.has(write.key)) await writeProperty(successorId, undefined, write)
     }
   }
 
-  const marker = JSON.stringify({ id: successorId, date: next.date, rule: rawRule, fp: null, state: 'live' })
-  await writeProperty(sourceTaskId, props.find((prop) => prop.key === 'recurrence_next'), {
-    key: 'recurrence_next', valueType: 'text', field: 'value_text', value: marker,
-  })
+  // A marker that already names this occurrence (the app's, with its
+  // fingerprint for undo) is kept as it is.
+  if (!markerNames(props, successorId)) {
+    const marker = JSON.stringify({ id: successorId, date: next.date, rule: rawRule, fp: null, state: 'live' })
+    await writeProperty(sourceTaskId, props.find((prop) => prop.key === 'recurrence_next'), {
+      key: 'recurrence_next', valueType: 'text', field: 'value_text', value: marker,
+    })
+  }
   // Strip the rule from the completed task so completing it again can't re-fire.
   await writeProperty(sourceTaskId, ruleProp, { key: 'recurrence', valueType: 'text', field: 'value_text', value: null })
   return { kind, occurrenceId: successorId, dueDate: next.dueDate }

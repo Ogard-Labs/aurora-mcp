@@ -1474,8 +1474,14 @@ export function formatToolResult(result: ToolResult): string {
       return `Created: "${result.title}" (${result.id})`
     case 'task_created':
       return `Task created: "${result.title}" (${result.id})${result.status ? ` [${result.status}]` : ''}${result.task_list_name ? ` in ${result.task_list_name}` : ''}`
-    case 'task_updated':
-      return `Task updated: "${result.title}" (${result.id}) — changed: ${result.changed_fields.join(', ') || 'nothing'}`
+    case 'task_updated': {
+      const lines = [`Task updated: "${result.title}" (${result.id}) — changed: ${result.changed_fields.join(', ') || 'nothing'}`]
+      if (result.next_occurrence) {
+        lines.push(`Next occurrence ${result.next_occurrence.created ? 'created' : 'already exists'}: ${result.next_occurrence.id} due ${result.next_occurrence.due_date}`)
+      }
+      if (result.note) lines.push(`Note: ${result.note}`)
+      return lines.join('\n')
+    }
     case 'object_updated':
       return `Object updated: ${result.id} — changed: ${result.changed_fields.join(', ') || 'nothing'}`
     case 'updated':
@@ -1615,11 +1621,16 @@ export function formatToolResult(result: ToolResult): string {
     case 'members':
       if (!result.members.length) return 'No members found.'
       return result.members.map((m) => `- ${m.name ?? m.email} (${m.role}, ${m.id})`).join('\n')
-    case 'task_lists':
-      if (!result.task_lists.length) return 'No task lists found.'
-      return result.task_lists.map((l) => `- ${l.name} (${l.id})`).join('\n')
-    case 'task_statuses':
-      return result.statuses.join(', ')
+    case 'task_lists': {
+      const lines = result.task_lists.map((l) => `- ${l.name} (${l.id})`)
+      if (!lines.length) lines.push('No readable task lists found.')
+      if (result.note) lines.push(`Note: ${result.note}`)
+      return lines.join('\n')
+    }
+    case 'task_statuses': {
+      const text = result.status_definitions.map((status) => `${status.id} (${status.group})`).join(', ')
+      return result.note ? `${text}\nNote: ${result.note}` : text
+    }
     case 'restored':
       return result.changed
         ? `Restored object ${result.id} from trash.`
