@@ -37,6 +37,12 @@ on it, so update before then.
   (`email_verification_required`), for a role that may read but not change an
   object (`write_refused`), and for retired AuroraCloud resources (410 Gone,
   no longer retried) (#40).
+- Task assignees and labels are written the way the app stores them: assignees
+  as comma-separated user ids in `assignee`, labels comma-separated in `tags`.
+  Earlier versions wrote JSON under `assignees` and `labels`, which the app did
+  not show. Values in the app's format are now read, values written by earlier
+  versions are still read and are moved to the app's format the next time the
+  task is changed, and empty lists clear the field (#47).
 
 ### Changed
 
