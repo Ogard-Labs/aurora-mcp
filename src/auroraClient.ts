@@ -1264,6 +1264,16 @@ export async function updateTaskProps(
   // `labels` from an older MCP are moved into `tags` on the next write to the
   // task, so the app reads them properly. Older MCP `assignees` are replaced
   // when assignees are next set (see `taskAssignees` for why not sooner).
+  // The MCP can neither decrypt nor re-encrypt end-to-end encrypted values, so
+  // writing over them would destroy them (and store the new value in plain text).
+  // Refuse before anything is written.
+  const encrypted = (...keys: string[]) => keys.some((key) => isEncryptedMetadataValue(recordByKey.get(key)?.value_text))
+  if (patch.assignees !== undefined && encrypted('assignee', 'assignees')) {
+    throw new ToolInputError("This task's assignees are end-to-end encrypted, so the MCP server cannot change them. Change them in Aurora.")
+  }
+  if (patch.labels !== undefined && encrypted('tags', 'labels')) {
+    throw new ToolInputError("This task's labels are end-to-end encrypted, so the MCP server cannot change them. Change them in Aurora.")
+  }
   if (patch.assignees !== undefined) {
     const assignees = normalizeTaskList(patch.assignees)
     triples.push({ key: 'assignee', valueType: 'text', value: assignees.length ? assignees.join(',') : null })

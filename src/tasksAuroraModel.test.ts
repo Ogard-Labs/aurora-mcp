@@ -425,6 +425,22 @@ test('encrypted tags are not mixed with older MCP labels on an unrelated write',
   assert.equal(props['labels']?.value_text, '["legacy"]')
 })
 
+test('update_task refuses to overwrite encrypted labels or assignees and changes nothing', async () => {
+  const cloud = new FakeCloud()
+  cloud.object('task-1', 'task', 'Write report')
+  cloud.prop('task-1', 'tags', { value_text: '__e2ee__ciphertext' })
+  cloud.prop('task-1', 'assignee', { value_text: '__e2ee__other' })
+  await withCloud(cloud, async () => {
+    const labels = await executeToolCall('update_task', { id: 'task-1', title: 'Renamed', priority: 'high', labels: ['plain'] }, WS) as { type: string; message?: string }
+    assert.equal(labels.type, 'error')
+    assert.match(labels.message ?? '', /labels are end-to-end encrypted/)
+    await assert.rejects(updateTaskProps('task-1', WS, { assignees: [] }), /assignees are end-to-end encrypted/)
+  })
+  assert.deepEqual(cloud.writes, [])
+  assert.equal(cloud.objects.get('task-1')?.title, 'Write report')
+  assert.equal(cloud.propsOf('task-1')['tags']?.value_text, '__e2ee__ciphertext')
+})
+
 test('the app\'s own comma-separated labels are left in place when they are not being changed', async () => {
   const cloud = new FakeCloud()
   cloud.object('task-1', 'task', 'Write report')
