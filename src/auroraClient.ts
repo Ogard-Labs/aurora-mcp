@@ -7,6 +7,12 @@
  */
 import type { AuroraConnectionContext, ContentReadResult, GrantedWorkspace } from './contracts.js'
 import { AuroraApiError, ToolInputError, ToolNotFoundError } from './errors.js'
+import type {
+  CustomDatabaseTemplateDefault,
+  ObjectTypeDef,
+  ObjectTypeSchema,
+  PropertyValueType,
+} from './customDatabases.js'
 import {
   isEncryptedMetadataValue,
   resolveWorkspaceTaskStatuses,
@@ -14,12 +20,6 @@ import {
   workspaceConfigObjectId,
   type WorkspaceTaskStatuses,
 } from './taskStatuses.js'
-import type {
-  CustomDatabaseTemplateDefault,
-  ObjectTypeDef,
-  ObjectTypeSchema,
-  PropertyValueType,
-} from './customDatabases.js'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
