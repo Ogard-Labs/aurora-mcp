@@ -12,6 +12,12 @@ All notable changes to this project are documented in this file.
   `https://api.auroradocs.eu` keep working. The npm package, `aurora-mcp`
   executable, extension name, server identity and state directory are unchanged.
 - The security and conduct contact is now `contact@aurora.ink`.
+- Setup examples register the server as `aurora` instead of `auroradocs`, and
+  the desktop extension pack command writes `aurora.mcpb`. Existing client
+  entries named `auroradocs` keep working; the name is only a local alias.
+- Pinned `zod` to 4.6.6 (GHSA-mrhx-c7xc-m3w5, memory exhaustion on oversized
+  constrained collections) and moved the dependency overrides from
+  `package.json` to `pnpm-workspace.yaml`, which pnpm 11 reads.
 
 ## [0.3.0] - 2026-09-05
 

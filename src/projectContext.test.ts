@@ -24,7 +24,7 @@ const workspace = { id: 'workspace-1', name: 'Henrik PKM' }
 const project = {
   id: 'project-1',
   workspaceId: 'workspace-1',
-  title: 'Launch AuroraDocs',
+  title: 'Launch Aurora',
   goal: 'Ship the public agent workflow',
   status: 'In Progress',
   priority: 'High',
@@ -50,7 +50,7 @@ const project = {
   sources: [{
     sourceId: 'object:decision-1',
     title: 'Launch decision',
-    deepLink: 'https://app.auroradocs.eu/workspaces/workspace-1/objects/decision-1',
+    deepLink: 'https://app.aurora.ink/workspaces/workspace-1/objects/decision-1',
     updatedAt: '2026-07-14T08:00:00.000Z',
     availability: 'available',
   }],
@@ -100,7 +100,7 @@ test('get_project_context returns a citation-ready resume packet', async () => {
     assert.equal(result.project.tasks.groups.blocked[0]?.title, 'Waiting for legal review')
     assert.equal(result.project.sources[0]?.sourceId, 'object:decision-1')
     assert.equal(result.asOf, '2026-07-14T12:00:00.000Z')
-    assert.match(formatToolResult(result), /^Workspace: Henrik PKM \(workspace-1\)\nProject: Launch AuroraDocs \(project-1\)\nAs of:/)
+    assert.match(formatToolResult(result), /^Workspace: Henrik PKM \(workspace-1\)\nProject: Launch Aurora \(project-1\)\nAs of:/)
     assert.match(formatToolResult(result), /Blockers:\n- Waiting for legal review/)
     assert.match(formatToolResult(result), /Next actions:\n- Complete legal review/)
     assert.match(formatToolResult(result), /Citations:\n- Launch decision \[object:decision-1\]/)
@@ -131,7 +131,7 @@ test('ambiguous name query returns candidates and never picks one', async () => 
       status: 'ambiguous',
       workspace,
       candidates: [
-        { id: 'project-1', workspaceId: 'workspace-1', title: 'Launch AuroraDocs' },
+        { id: 'project-1', workspaceId: 'workspace-1', title: 'Launch Aurora' },
         { id: 'project-2', workspaceId: 'workspace-1', title: 'Launch Website' },
       ],
       asOf: '2026-07-14T12:00:00.000Z',
@@ -170,7 +170,7 @@ test('list_project_changes requires project, cursor, and bounded limit and retur
     res.end(JSON.stringify({
       status: 'ok',
       workspace,
-      project: { id: 'project-1', workspaceId: 'workspace-1', title: 'Launch AuroraDocs' },
+      project: { id: 'project-1', workspaceId: 'workspace-1', title: 'Launch Aurora' },
       asOf: '2026-07-14T12:00:00.000Z',
       items: [{ id: 'event-2', type: 'task_updated', title: 'Publish MCP', updatedAt: '2026-07-14T11:30:00.000Z' }],
       nextCursor: 'cursor-2',
@@ -230,7 +230,7 @@ test('project workflows reject upstream pages that violate requested bounds or p
   for (const body of [
     {
       status: 'ok', workspace,
-      project: { id: 'project-1', workspaceId: 'workspace-1', title: 'Launch AuroraDocs' },
+      project: { id: 'project-1', workspaceId: 'workspace-1', title: 'Launch Aurora' },
       asOf: '2026-07-14T12:00:00.000Z',
       items: [
         { id: 'event-1', type: 'task_updated', title: null, updatedAt: '2026-07-14T11:00:00.000Z' },
@@ -241,7 +241,7 @@ test('project workflows reject upstream pages that violate requested bounds or p
     },
     {
       status: 'ok', workspace,
-      project: { id: 'project-1', workspaceId: 'workspace-1', title: 'Launch AuroraDocs' },
+      project: { id: 'project-1', workspaceId: 'workspace-1', title: 'Launch Aurora' },
       asOf: '2026-07-14T12:00:00.000Z',
       items: [],
       nextCursor: null,
@@ -249,7 +249,7 @@ test('project workflows reject upstream pages that violate requested bounds or p
     },
     {
       status: 'ok', workspace,
-      project: { id: 'project-1', workspaceId: 'workspace-1', title: 'Launch AuroraDocs' },
+      project: { id: 'project-1', workspaceId: 'workspace-1', title: 'Launch Aurora' },
       asOf: '2026-07-14T12:00:00.000Z',
       items: [{ id: 'event-1', type: 'task_updated', title: null, updatedAt: '2026-02-30T11:00:00.000Z' }],
       nextCursor: null,
@@ -322,7 +322,7 @@ test('project context accepts only single-slash local or HTTPS citation links', 
     '/\\evil.example/steal',
     '/object/decision-1\\evil',
     '/object/decision-1%5Cevil',
-    'http://app.auroradocs.eu/object/decision-1',
+    'http://app.aurora.ink/object/decision-1',
   ]) {
     await withApi((_req, res) => {
       res.setHeader('content-type', 'application/json')
