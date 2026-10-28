@@ -5,8 +5,9 @@ Date: 2026-07-13
 ## Published source
 
 This repository began as a clean attributed snapshot exported on 2026-07-13
-from the private AuroraDocs source. The snapshot contains only the standalone
-MCP server and its public documentation, policies, tests, and release tooling.
+from the private Aurora source (formerly named AuroraDocs). The snapshot
+contains only the standalone MCP server and its public documentation, policies,
+tests, and release tooling.
 
 Candidate history was audited before publication. Although the intended MCP
 history passed its focused checks, a broader candidate-history check found
