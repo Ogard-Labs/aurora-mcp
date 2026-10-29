@@ -124,3 +124,13 @@ test('relation targets refuse retired Research Studio and hidden system types', 
   )
   assert.equal(field?.targetType, 'page')
 })
+
+test('an unchanged legacy relation to a retired type stays valid, but a new or retargeted one is refused', () => {
+  const legacy = [{ key: 'link', label: 'Link', value_type: 'relation' as const, required: false, targetType: 'research_project' }]
+  assert.doesNotThrow(() => validateAdditiveObjectTypePatch(legacy, legacy))
+  assert.doesNotThrow(() => validateCustomDatabaseSchema(legacy, { existingTypes: [], legacySchema: legacy }))
+  const retargeted = [{ ...legacy[0]!, targetType: 'research_source' }]
+  assert.throws(() => validateCustomDatabaseSchema(retargeted, { existingTypes: [], legacySchema: legacy }), /not available/)
+  const added = [...legacy, { key: 'other', label: 'Other', value_type: 'relation' as const, required: false, targetType: 'research_project' }]
+  assert.throws(() => validateCustomDatabaseSchema(added, { existingTypes: [], legacySchema: legacy }), /not available/)
+})
