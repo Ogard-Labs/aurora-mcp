@@ -107,3 +107,30 @@ test('approved plans reject a foreign workspace, expiry, tampering, and stale ta
   assert.throws(() => assertApplicableCustomDatabasePlan({ ...plan, name: 'Changed' }, workspaceId, [], new Date('2026-07-19T10:10:00Z')), /hash/i)
   assert.throws(() => assertApplicableCustomDatabasePlan({ ...plan, planId: 'changed' }, workspaceId, [], new Date('2026-07-19T10:10:00Z')), /hash/i)
 })
+
+test('relation targets refuse retired Research Studio and hidden system types', () => {
+  for (const targetType of ['research_project', 'research_source', 'task_list', 'workspace_config']) {
+    assert.throws(
+      () => validateCustomDatabaseSchema(
+        [{ key: 'link', label: 'Link', value_type: 'relation', required: false, targetType }],
+        { existingTypes: [] },
+      ),
+      /not available/,
+    )
+  }
+  const [field] = validateCustomDatabaseSchema(
+    [{ key: 'link', label: 'Link', value_type: 'relation', required: false, targetType: 'page' }],
+    { existingTypes: [] },
+  )
+  assert.equal(field?.targetType, 'page')
+})
+
+test('an unchanged legacy relation to a retired type stays valid, but a new or retargeted one is refused', () => {
+  const legacy = [{ key: 'link', label: 'Link', value_type: 'relation' as const, required: false, targetType: 'research_project' }]
+  assert.doesNotThrow(() => validateAdditiveObjectTypePatch(legacy, legacy))
+  assert.doesNotThrow(() => validateCustomDatabaseSchema(legacy, { existingTypes: [], legacySchema: legacy }))
+  const retargeted = [{ ...legacy[0]!, targetType: 'research_source' }]
+  assert.throws(() => validateCustomDatabaseSchema(retargeted, { existingTypes: [], legacySchema: legacy }), /not available/)
+  const added = [...legacy, { key: 'other', label: 'Other', value_type: 'relation' as const, required: false, targetType: 'research_project' }]
+  assert.throws(() => validateCustomDatabaseSchema(added, { existingTypes: [], legacySchema: legacy }), /not available/)
+})

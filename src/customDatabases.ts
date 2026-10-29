@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
+import { isHiddenSystemObjectType, isRetiredObjectType } from './objectTypes.js'
 
 export const CUSTOM_DATABASE_CONTRACT_VERSION = 1 as const
 export const CUSTOM_DATABASE_PLAN_TTL_MS = 30 * 60 * 1000
@@ -107,7 +108,6 @@ const VALUE_TYPES = new Set<PropertyValueType>([
 const BUILTIN_RELATION_TARGETS = new Set([
   'page', 'note', 'daily', 'task', 'database', 'collection', 'canvas', 'bookmark', 'file',
   'space', 'people', 'meetings', 'trips', 'projects', 'images', 'quotes', 'links', 'backlog',
-  'research_project', 'research_source', 'research_session', 'research_artifact', 'research_image',
   'habit', 'transaction', 'site',
 ])
 
@@ -209,7 +209,7 @@ function cloneField(value: ObjectTypeSchema): ObjectTypeSchema {
 
 export function validateCustomDatabaseSchema(
   schema: ObjectTypeSchema[],
-  options: { existingTypes?: ObjectTypeDef[]; selfTargetType?: string } = {},
+  options: { existingTypes?: ObjectTypeDef[]; selfTargetType?: string; legacySchema?: ObjectTypeSchema[] } = {},
 ): ObjectTypeSchema[] {
   if (!Array.isArray(schema)) throw new Error('Schema must be an array')
   if (schema.length > 64) throw new Error('Schema may contain at most 64 properties')
@@ -256,7 +256,12 @@ export function validateCustomDatabaseSchema(
       let target = input.targetType?.trim()
       if (target === 'self') target = options.selfTargetType
       if (!target) throw new Error(`Relation target for "${key}" is required`)
-      if (options.existingTypes && !BUILTIN_RELATION_TARGETS.has(target) && target !== options.selfTargetType && !customTargets.has(target)) {
+      // A relation saved before the target was retired keeps working; only new or retargeted ones are refused.
+      const grandfathered = options.legacySchema?.some((old) => old.key === key && old.value_type === 'relation' && old.targetType === target)
+      if (!grandfathered && (isRetiredObjectType(target) || isHiddenSystemObjectType(target))) {
+        throw new Error(`Relation target for "${key}" is not available: ${target}`)
+      }
+      if (options.existingTypes && !grandfathered && !BUILTIN_RELATION_TARGETS.has(target) && target !== options.selfTargetType && !customTargets.has(target)) {
         throw new Error(`Relation target for "${key}" does not resolve: ${target}`)
       }
       next.targetType = target
@@ -268,8 +273,8 @@ export function validateCustomDatabaseSchema(
 }
 
 export function validateAdditiveObjectTypePatch(currentSchema: ObjectTypeSchema[], nextSchema: ObjectTypeSchema[]): ObjectTypeSchema[] {
-  const current = validateCustomDatabaseSchema(currentSchema)
-  const next = validateCustomDatabaseSchema(nextSchema)
+  const current = validateCustomDatabaseSchema(currentSchema, { legacySchema: currentSchema })
+  const next = validateCustomDatabaseSchema(nextSchema, { legacySchema: currentSchema })
   const nextByKey = new Map(next.map((fieldValue) => [fieldValue.key, fieldValue]))
   const currentKeys = new Set(current.map((fieldValue) => fieldValue.key))
   for (const fieldValue of current) {
@@ -371,11 +376,12 @@ export function buildCustomDatabasePlan(input: BuildPlanInput): CustomDatabasePl
   const schema = validateCustomDatabaseSchema(input.schema, {
     existingTypes: input.existingTypes,
     selfTargetType: `custom:${match?.id ?? plannedId}`,
+    ...(match ? { legacySchema: match.schema } : {}),
   })
   let operation: CustomDatabasePlanOperation = { kind: 'create', objectTypeId: plannedId }
   const matches: CustomDatabasePlanMatch[] = []
   if (match) {
-    const current = validateCustomDatabaseSchema(match.schema)
+    const current = validateCustomDatabaseSchema(match.schema, { legacySchema: match.schema })
     const exactSchema = schemasEqual(current, schema)
     const exactPresentation = match.name === name && match.icon === icon && match.color === color
     if (exactSchema && exactPresentation) {
@@ -409,7 +415,7 @@ export function buildCustomDatabasePlan(input: BuildPlanInput): CustomDatabasePl
 function typeMatchesPlan(existing: ObjectTypeDef, plan: CustomDatabasePlan): boolean {
   return existing.workspace_id === plan.workspaceId && existing.name === plan.name
     && existing.icon === plan.icon && existing.color === plan.color
-    && schemasEqual(validateCustomDatabaseSchema(existing.schema), plan.schema)
+    && schemasEqual(validateCustomDatabaseSchema(existing.schema, { legacySchema: existing.schema }), plan.schema)
 }
 
 export function assertApplicableCustomDatabasePlan(
