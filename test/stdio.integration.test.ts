@@ -20,7 +20,7 @@ function projectContextPayload() {
     project: {
       id: 'project-test',
       workspaceId,
-      title: 'Launch AuroraDocs',
+      title: 'Launch Aurora',
       goal: null,
       status: 'In Progress',
       priority: null,

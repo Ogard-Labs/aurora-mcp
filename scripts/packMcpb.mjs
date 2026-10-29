@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const staging = path.join(root, '.mcpb-staging')
-const output = path.join(root, 'auroradocs.mcpb')
+const output = path.join(root, 'aurora.mcpb')
 
 await rm(staging, { recursive: true, force: true })
 await mkdir(staging, { recursive: true })
