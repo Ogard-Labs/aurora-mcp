@@ -920,7 +920,7 @@ async function executeToolCallUnsafe(
           return invalidInput(`Another object type already uses the name "${name}"`)
         }
         const proposed = input['schema'] === undefined ? existing.schema : parseObjectTypeSchema(input['schema'], existing.schema)
-        const normalized = validateCustomDatabaseSchema(proposed, { existingTypes: objectTypes, selfTargetType: `custom:${id}` })
+        const normalized = validateCustomDatabaseSchema(proposed, { existingTypes: objectTypes, selfTargetType: `custom:${id}`, legacySchema: existing.schema })
         const schema = validateAdditiveObjectTypePatch(existing.schema, normalized)
         const icon = optionalPresentation(input, 'icon')
         const color = optionalPresentation(input, 'color')
