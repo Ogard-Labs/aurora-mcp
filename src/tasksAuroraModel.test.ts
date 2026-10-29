@@ -451,6 +451,51 @@ test('a successor left half-written by an interrupted completion is finished wit
   assert.equal(cloud.props.filter((prop) => prop.object_id === successorId && prop.key === 'status').length, 1)
 })
 
+test('completing a task again brings back the occurrence its undone completion removed', async () => {
+  const cloud = new FakeCloud()
+  seedRecurring(cloud)
+  const successorId = recurrenceSuccessorId('task-1', '2026-10-12')
+  // The app undid the first completion: the occurrence is in the trash, the
+  // source repeats again and its marker says `undone`, with the fingerprint.
+  cloud.prop('task-1', 'recurrence_next', { value_text: JSON.stringify({ id: successorId, date: '2026-10-12', rule: 'FREQ=DAILY', fp: 'abc', state: 'undone' }) })
+  cloud.object(successorId, 'task', 'Water plants', { is_deleted: true })
+  cloud.prop(successorId, 'status', { value_type: 'select', value_text: 'Backlog' })
+  await withCloud(cloud, async () => {
+    const result = await executeToolCall('update_task', { id: 'task-1', status: 'Done' }, WS) as { next_occurrence?: { id: string; created: boolean } }
+    assert.equal(result.next_occurrence?.id, successorId)
+    assert.equal(result.next_occurrence?.created, false)
+  })
+  assert.equal(cloud.objects.get(successorId)?.['is_deleted'], false)
+  // Brought back as it left: no defaults are written over it.
+  assert.deepEqual(Object.keys(cloud.propsOf(successorId)), ['status'])
+  assert.equal(cloud.propsOf(successorId)['status']?.value_text, 'Backlog')
+  assert.equal(cloud.writes.filter((write) => write === 'POST /api/collections/objects/records').length, 0)
+  const source = cloud.propsOf('task-1')
+  assert.equal(source['recurrence']?.value_text, null)
+  assert.deepEqual(JSON.parse(String(source['recurrence_next']?.value_text)), {
+    id: successorId, date: '2026-10-12', rule: 'FREQ=DAILY', fp: null, state: 'live',
+  })
+})
+
+test('an occurrence the user deleted, or an undone marker without its fingerprint, stays deleted', async () => {
+  for (const marker of [
+    { id: recurrenceSuccessorId('task-1', '2026-10-12'), date: '2026-10-12', rule: 'FREQ=DAILY', fp: 'abc', state: 'live' },
+    { id: recurrenceSuccessorId('task-1', '2026-10-12'), date: '2026-10-12', rule: 'FREQ=DAILY', fp: null, state: 'undone' },
+    { id: 'other-occurrence', date: '2026-10-12', rule: 'FREQ=DAILY', fp: 'abc', state: 'undone' },
+  ]) {
+    const cloud = new FakeCloud()
+    seedRecurring(cloud)
+    const successorId = recurrenceSuccessorId('task-1', '2026-10-12')
+    cloud.prop('task-1', 'recurrence_next', { value_text: JSON.stringify(marker) })
+    cloud.object(successorId, 'task', 'Water plants', { is_deleted: true })
+    await withCloud(cloud, async () => {
+      await executeToolCall('update_task', { id: 'task-1', status: 'Done' }, WS)
+    })
+    assert.equal(cloud.objects.get(successorId)?.['is_deleted'], true, JSON.stringify(marker))
+    assert.deepEqual(Object.keys(cloud.propsOf(successorId)), [], JSON.stringify(marker))
+  }
+})
+
 test('text results carry the next occurrence and encryption notes', () => {
   assert.equal(formatToolResult({
     type: 'task_updated', id: 't', title: 'T', changed_fields: ['status'],
