@@ -1,17 +1,17 @@
 {
-  "name": "@henrikogard/auroradocs-mcp",
-  "version": "0.3.1",
+  "name": "@ogard-labs/aurora-mcp",
+  "version": "0.4.0",
   "private": false,
   "type": "module",
   "description": "AuroraCloud-first MCP server that exposes Aurora workspace data to Claude Desktop and other AI agents",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/henrikogaard/auroradocs-mcp.git"
+    "url": "git+https://github.com/Ogard-Labs/aurora-mcp.git"
   },
-  "homepage": "https://github.com/henrikogaard/auroradocs-mcp#readme",
+  "homepage": "https://github.com/Ogard-Labs/aurora-mcp#readme",
   "bugs": {
-    "url": "https://github.com/henrikogaard/auroradocs-mcp/issues"
+    "url": "https://github.com/Ogard-Labs/aurora-mcp/issues"
   },
   "publishConfig": {
     "access": "public"
@@ -23,6 +23,7 @@
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "docs/**/*.md",
+    "!docs/superpowers/**",
     "README.md",
     "LICENSE",
     "NOTICE"

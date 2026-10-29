@@ -6,7 +6,7 @@ Please report suspected vulnerabilities privately to
 [contact@aurora.ink](mailto:contact@aurora.ink). Do not open a public
 GitHub issue or discussion for a security report.
 
-Include a concise description, the affected `@henrikogard/auroradocs-mcp`
+Include a concise description, the affected `@ogard-labs/aurora-mcp`
 version, expected and observed behavior, and minimal reproduction steps.
 Screenshots or sanitized logs are useful when they do not expose private
 information.

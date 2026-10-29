@@ -5,7 +5,7 @@ Status: Phase 0 runtime and Phase 1 Resume work delivered in `0.2.0`; later phas
 
 ## Implementation plans
 
-- [MCP runtime reliability and Resume work](superpowers/plans/2026-07-14-mcp-runtime-resume-work.md) — tracked in [issue #9](https://github.com/henrikogaard/auroradocs-mcp/issues/9)
+- [MCP runtime reliability and Resume work](https://github.com/Ogard-Labs/aurora-mcp/blob/main/docs/superpowers/plans/2026-07-14-mcp-runtime-resume-work.md) — tracked in [issue #9](https://github.com/Ogard-Labs/aurora-mcp/issues/9)
 - [Workspace policy, multi-workspace grants, and project context](#recommended-architecture) — public architecture and delivery status are maintained in this roadmap
 
 ## Delivery status

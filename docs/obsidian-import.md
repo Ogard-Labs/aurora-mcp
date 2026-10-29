@@ -1,6 +1,6 @@
 # Obsidian import
 
-> **Available since 0.2.1:** these tools require the published `0.3.1` package
+> **Available since 0.2.1:** these tools require the published `0.4.0` package
 > or newer.
 
 The importer converts one explicitly authorized local Obsidian vault into an

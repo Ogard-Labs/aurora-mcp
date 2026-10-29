@@ -1,12 +1,12 @@
 # Aurora MCP Server
 
-`@henrikogard/auroradocs-mcp` connects a local MCP client to independently
+`@ogard-labs/aurora-mcp` connects a local MCP client to independently
 granted AuroraCloud workspaces. It runs on your computer over stdio and sends
 authenticated requests to `https://api.aurora.ink`.
 
-The public package is `@henrikogard/auroradocs-mcp` and the executable is
+The public package is `@ogard-labs/aurora-mcp` and the executable is
 `aurora-mcp`. The latest published package and current source version are
-`0.3.1`.
+`0.4.0`.
 
 For an end-to-end installation walkthrough, use the dedicated
 [Setup guide](docs/setup.md). AI assistants and client integrators should start
@@ -89,7 +89,7 @@ in the knowledge-search recipe above.
 ## Configure a client
 
 All examples below use the production AuroraCloud API, a new client credential,
-and package version `0.3.1`. Replace `REDACTED` locally. Do not commit the
+and package version `0.4.0`. Replace `REDACTED` locally. Do not commit the
 resulting configuration. The examples store the token in the client's saved
 configuration, so protect that file as a credential.
 
@@ -127,7 +127,7 @@ already present:
   "mcpServers": {
     "aurora": {
       "command": "npx",
-      "args": ["-y", "@henrikogard/auroradocs-mcp@0.3.1"],
+      "args": ["-y", "@ogard-labs/aurora-mcp@0.4.0"],
       "env": {
         "AURORA_API_URL": "https://api.aurora.ink",
         "AURORA_API_TOKEN": "REDACTED"
@@ -150,7 +150,7 @@ Options must appear before the server name:
 claude mcp add --transport stdio --scope user \
   --env AURORA_API_URL=https://api.aurora.ink \
   --env AURORA_API_TOKEN=REDACTED \
-  aurora -- npx -y @henrikogard/auroradocs-mcp@0.3.1
+  aurora -- npx -y @ogard-labs/aurora-mcp@0.4.0
 ```
 
 Run `claude mcp get aurora` to inspect the saved entry, then use `/mcp` in
@@ -165,7 +165,7 @@ The installed Codex CLI accepts `--env` for local stdio servers:
 codex mcp add \
   --env AURORA_API_URL=https://api.aurora.ink \
   --env AURORA_API_TOKEN=REDACTED \
-  aurora -- npx -y @henrikogard/auroradocs-mcp@0.3.1
+  aurora -- npx -y @ogard-labs/aurora-mcp@0.4.0
 ```
 
 Run `codex mcp get aurora` to inspect the saved entry.
@@ -177,7 +177,7 @@ Use this valid generic JSON shape when a client accepts an MCP server object:
 ```json
 {
   "command": "npx",
-  "args": ["-y", "@henrikogard/auroradocs-mcp@0.3.1"],
+  "args": ["-y", "@ogard-labs/aurora-mcp@0.4.0"],
   "env": {
     "AURORA_API_URL": "https://api.aurora.ink",
     "AURORA_API_TOKEN": "REDACTED"
@@ -326,5 +326,9 @@ Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 Aurora uses `https://api.aurora.ink` in new connection examples and the desktop
 extension default. Existing configurations using `https://api.auroradocs.eu`
-remain valid. The package `@henrikogard/auroradocs-mcp`, executable `aurora-mcp`,
-MCP server identity, resource URIs, and private state directory stay unchanged.
+remain valid. The executable `aurora-mcp`, MCP server identity, resource URIs,
+and private state directory are unchanged.
+
+Earlier versions were published as `@henrikogard/auroradocs-mcp`. That package
+is deprecated and gets no further releases. To move over, replace it with
+`@ogard-labs/aurora-mcp@0.4.0` in your client configuration.

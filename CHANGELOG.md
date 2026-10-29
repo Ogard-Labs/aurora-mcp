@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-29
+
+### Changed
+
+- The package is now `@ogard-labs/aurora-mcp`; `@henrikogard/auroradocs-mcp` is
+  deprecated and gets no further releases. Replace it with
+  `@ogard-labs/aurora-mcp@0.4.0` in client configurations. The `aurora-mcp`
+  executable, server identity and state directory are unchanged.
+- The repository moved to Ogard-Labs/aurora-mcp.
+- The MCP bundle is named `aurora`.
+- Internal implementation plans under `docs/superpowers` are no longer included
+  in the npm package. They stay in the repository.
+
 ## [0.3.1] - 2026-10-29
 
 Brings the server in line with AuroraCloud changes since 0.3.0. The legacy
