@@ -467,6 +467,20 @@ test('next due date steps the rule like Aurora and keeps the time of day', () =>
   assert.deepEqual(nextRecurrenceDue('FREQ=DAILY', null, new Date(2026, 9, 11, 15)), { date: '2026-10-12', dueDate: '2026-10-12' })
 })
 
+test('a rule with a value the parser drops is left to Aurora instead of being stepped on a wrong schedule', async () => {
+  assert.equal(nextRecurrenceDue('FREQ=DAILY;UNTIL=bogus', '2026-10-11'), null)
+  assert.equal(nextRecurrenceDue('FREQ=DAILY;INTERVAL=0', '2026-10-11'), null)
+  const cloud = new FakeCloud()
+  seedRecurring(cloud)
+  cloud.props.find((prop) => prop.object_id === 'task-1' && prop.key === 'recurrence')!['value_text'] = 'FREQ=DAILY;UNTIL=bogus'
+  await withCloud(cloud, async () => {
+    const result = await executeToolCall('update_task', { id: 'task-1', status: 'Done' }, WS) as { next_occurrence?: unknown }
+    assert.equal(result.next_occurrence, undefined)
+  })
+  assert.equal(cloud.writes.filter((write) => write.startsWith('POST /api/collections/objects')).length, 0)
+  assert.equal(cloud.propsOf('task-1')['recurrence']?.value_text, 'FREQ=DAILY;UNTIL=bogus')
+})
+
 test('the next occurrence id matches the formula Aurora uses', () => {
   assert.equal(recurrenceSuccessorId('task-1', '2026-10-12'), 'b1f86d8d840c60d')
 })
@@ -594,6 +608,51 @@ test('a successor left half-written by an interrupted completion is finished wit
   assert.equal(props['recurrence']?.value_text, 'FREQ=DAILY')
   assert.equal(props['task_list_id']?.value_text, 'list-home')
   assert.equal(cloud.props.filter((prop) => prop.object_id === successorId && prop.key === 'status').length, 1)
+})
+
+test('completing a task again brings back the occurrence its undone completion removed', async () => {
+  const cloud = new FakeCloud()
+  seedRecurring(cloud)
+  const successorId = recurrenceSuccessorId('task-1', '2026-10-12')
+  // The app undid the first completion: the occurrence is in the trash, the
+  // source repeats again and its marker says `undone`, with the fingerprint.
+  cloud.prop('task-1', 'recurrence_next', { value_text: JSON.stringify({ id: successorId, date: '2026-10-12', rule: 'FREQ=DAILY', fp: 'abc', state: 'undone' }) })
+  cloud.object(successorId, 'task', 'Water plants', { is_deleted: true })
+  cloud.prop(successorId, 'status', { value_type: 'select', value_text: 'Backlog' })
+  await withCloud(cloud, async () => {
+    const result = await executeToolCall('update_task', { id: 'task-1', status: 'Done' }, WS) as { next_occurrence?: { id: string; created: boolean } }
+    assert.equal(result.next_occurrence?.id, successorId)
+    assert.equal(result.next_occurrence?.created, false)
+  })
+  assert.equal(cloud.objects.get(successorId)?.['is_deleted'], false)
+  // Brought back as it left: no defaults are written over it.
+  assert.deepEqual(Object.keys(cloud.propsOf(successorId)), ['status'])
+  assert.equal(cloud.propsOf(successorId)['status']?.value_text, 'Backlog')
+  assert.equal(cloud.writes.filter((write) => write === 'POST /api/collections/objects/records').length, 0)
+  const source = cloud.propsOf('task-1')
+  assert.equal(source['recurrence']?.value_text, null)
+  assert.deepEqual(JSON.parse(String(source['recurrence_next']?.value_text)), {
+    id: successorId, date: '2026-10-12', rule: 'FREQ=DAILY', fp: null, state: 'live',
+  })
+})
+
+test('an occurrence the user deleted, or an undone marker without its fingerprint, stays deleted', async () => {
+  for (const marker of [
+    { id: recurrenceSuccessorId('task-1', '2026-10-12'), date: '2026-10-12', rule: 'FREQ=DAILY', fp: 'abc', state: 'live' },
+    { id: recurrenceSuccessorId('task-1', '2026-10-12'), date: '2026-10-12', rule: 'FREQ=DAILY', fp: null, state: 'undone' },
+    { id: 'other-occurrence', date: '2026-10-12', rule: 'FREQ=DAILY', fp: 'abc', state: 'undone' },
+  ]) {
+    const cloud = new FakeCloud()
+    seedRecurring(cloud)
+    const successorId = recurrenceSuccessorId('task-1', '2026-10-12')
+    cloud.prop('task-1', 'recurrence_next', { value_text: JSON.stringify(marker) })
+    cloud.object(successorId, 'task', 'Water plants', { is_deleted: true })
+    await withCloud(cloud, async () => {
+      await executeToolCall('update_task', { id: 'task-1', status: 'Done' }, WS)
+    })
+    assert.equal(cloud.objects.get(successorId)?.['is_deleted'], true, JSON.stringify(marker))
+    assert.deepEqual(Object.keys(cloud.propsOf(successorId)), [], JSON.stringify(marker))
+  }
 })
 
 test('text results carry the next occurrence and encryption notes', () => {

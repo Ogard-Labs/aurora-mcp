@@ -16,8 +16,10 @@
  *
  * An existing occurrence (created elsewhere, edited or deleted since) keeps
  * every value it has; only an unfinished completion has its missing defaults
- * filled in. The marker written here carries no fingerprint, so the app's
- * "undo completion" keeps an occurrence created here instead of removing it.
+ * filled in. The one exception is an occurrence that an undone completion
+ * removed: completing again brings it back, as the app does. The marker
+ * written here carries no fingerprint, so the app's "undo completion" keeps an
+ * occurrence created here instead of removing it.
  */
 import { createHash } from 'node:crypto'
 import {
@@ -25,9 +27,10 @@ import {
   getAuroraClient,
   getObject,
   listProperties,
+  restoreObject,
   type AuroraPropertyRecord,
 } from './auroraClient.js'
-import { nextOccurrence, parseRRule } from './recurrence.js'
+import { nextOccurrence, parseRRule, rejectedRuleValues } from './recurrence.js'
 import { isEncryptedMetadataValue, openTaskStatusId, type TaskStatusDefinition } from './taskStatuses.js'
 
 export type RecurrenceAdvance =
@@ -55,14 +58,18 @@ function formatDateKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
-/** The next occurrence's date and due value, or null when the rule is unusable or has ended. */
+/**
+ * The next occurrence's date and due value, or null when the rule is unusable or
+ * has ended. A rule whose value the parser drops (`UNTIL=bogus`, `INTERVAL=0`)
+ * is unusable: stepping what is left would run a different schedule.
+ */
 export function nextRecurrenceDue(
   rule: string,
   dueDate: string | null,
   now: Date = new Date(),
 ): { date: string; dueDate: string } | null {
   const parsed = parseRRule(rule)
-  if (!parsed) return null
+  if (!parsed || rejectedRuleValues(rule).length > 0) return null
   const sourceDate = datePart(dueDate)
   const anchor = sourceDate ? new Date(`${sourceDate}T00:00:00`) : now
   const from = sourceDate ? anchor : now
@@ -118,15 +125,32 @@ function successorDefaults(props: AuroraPropertyRecord[], status: string, dueDat
   return writes
 }
 
-/** Whether the source's `recurrence_next` marker already records this occurrence. */
-function markerNames(props: AuroraPropertyRecord[], successorId: string): boolean {
+type RecurrenceMarker = { id?: unknown; fp?: unknown; state?: unknown }
+
+function readMarker(props: AuroraPropertyRecord[]): RecurrenceMarker | null {
   const raw = props.find((prop) => prop.key === 'recurrence_next')?.value_text
-  if (!raw) return false
+  if (!raw) return null
   try {
-    return (JSON.parse(raw) as { id?: unknown }).id === successorId
+    return JSON.parse(raw) as RecurrenceMarker
   } catch {
-    return false
+    return null
   }
+}
+
+/** Whether the source's `recurrence_next` marker already records this occurrence as made by a completion. */
+function markerNames(props: AuroraPropertyRecord[], successorId: string): boolean {
+  const marker = readMarker(props)
+  return marker?.id === successorId && marker.state !== 'undone'
+}
+
+/**
+ * Whether the occurrence is the one an undone completion removed. The app brings
+ * it back when the same task is completed for the same date again; it knows the
+ * occurrence by the marker's id and fingerprint.
+ */
+function isUndoneOccurrence(props: AuroraPropertyRecord[], successorId: string): boolean {
+  const marker = readMarker(props)
+  return marker?.id === successorId && marker.state === 'undone' && typeof marker.fp === 'string' && marker.fp !== ''
 }
 
 async function writeProperty(
@@ -177,6 +201,10 @@ export async function advanceRecurrenceChain(
   // earlier call, edited or deleted since) is left as it is.
   const existing = await getObject(successorId, workspaceId)
   let kind: 'created' | 'existing' = 'existing'
+  // The occurrence an undone completion trashed is the user's own earlier
+  // result, not a deletion of theirs to respect: bring it back as it left.
+  const reviving = Boolean(existing?.is_deleted && isUndoneOccurrence(props, successorId))
+  if (reviving) await restoreObject(successorId, workspaceId)
   if (!existing) {
     await createObject(workspaceId, 'task', source.title ?? '', {
       id: successorId,
@@ -194,7 +222,7 @@ export async function advanceRecurrenceChain(
   const defaults = successorDefaults(props, openTaskStatusId(statuses), next.dueDate, rawRule)
   if (!existing) {
     for (const write of defaults) await writeProperty(successorId, undefined, write)
-  } else if (!existing.is_deleted && !markerNames(props, successorId)) {
+  } else if (!reviving && !existing.is_deleted && !markerNames(props, successorId)) {
     const present = new Set((await listProperties([successorId], workspaceId, { maxPages: 100 }))
       .filter((prop) => prop.object_id === successorId)
       .map((prop) => prop.key))
@@ -203,8 +231,8 @@ export async function advanceRecurrenceChain(
     }
   }
 
-  // A marker that already names this occurrence (the app's, with its
-  // fingerprint for undo) is kept as it is.
+  // A live marker that already names this occurrence (the app's, with its
+  // fingerprint for undo) is kept as it is. An undone one is written live again.
   if (!markerNames(props, successorId)) {
     const marker = JSON.stringify({ id: successorId, date: next.date, rule: rawRule, fp: null, state: 'live' })
     await writeProperty(sourceTaskId, props.find((prop) => prop.key === 'recurrence_next'), {
