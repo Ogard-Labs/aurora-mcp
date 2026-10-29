@@ -40,7 +40,7 @@ test('every packaged Markdown document avoids superseded runtime contracts', asy
     assert.doesNotMatch(
       document,
       /https:\/\/github\.com\/henrikogaard\/auroradocs(?:\/|$)/,
-      `${entry} links to the private AuroraDocs source repository`,
+      `${entry} links to the private Aurora source repository`,
     )
   }
 })
@@ -381,7 +381,7 @@ test('publication audit contains only public-safe repository context', async () 
   for (const requiredText of [
     'clean attributed snapshot',
     '2026-07-13',
-    'private AuroraDocs source',
+    'private Aurora source',
     'failed closed',
     'gitleaks',
     'no secrets or private data',
