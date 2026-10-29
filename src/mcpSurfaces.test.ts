@@ -35,7 +35,7 @@ function projectContext(workspaceId = 'workspace-1', projectId = 'project-1') {
     project: {
       id: projectId,
       workspaceId,
-      title: 'Launch AuroraDocs',
+      title: 'Launch Aurora',
       goal: 'Ship the public agent workflow',
       status: 'In Progress',
       priority: 'High',
@@ -56,7 +56,7 @@ function projectContext(workspaceId = 'workspace-1', projectId = 'project-1') {
       sources: [{
         sourceId: 'object:decision-1',
         title: 'Launch decision',
-        deepLink: 'https://app.auroradocs.eu/workspaces/workspace-1/objects/decision-1',
+        deepLink: 'https://app.aurora.ink/workspaces/workspace-1/objects/decision-1',
         updatedAt: '2026-07-14T08:00:00.000Z',
         availability: 'available',
       }],
@@ -202,7 +202,7 @@ test('completion provider suggests projects, object types, recipes, and template
         page: 1, perPage: 50, totalPages: 2, totalItems: 52,
         items: [
           {
-            id: 'project-launch', workspace_id: 'workspace-1', type: 'project', title: 'Launch AuroraDocs',
+            id: 'project-launch', workspace_id: 'workspace-1', type: 'project', title: 'Launch Aurora',
             icon: null, parent_id: null, is_deleted: false, is_template: false,
             created_at: '2026-07-01T10:00:00Z', updated_at: '2026-07-01T12:00:00Z',
           },

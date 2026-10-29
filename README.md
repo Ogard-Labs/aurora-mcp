@@ -112,7 +112,7 @@ MCP-token authentication only.
 
 ### Claude Desktop
 
-For one-click install, pack `auroradocs.mcpb` with `pnpm pack:mcpb` and install
+For one-click install, pack `aurora.mcpb` with `pnpm pack:mcpb` and install
 it from Claude Desktop **Settings → Extensions → Advanced settings → Install
 Extension…**. The extension asks for the AuroraCloud API URL and the MCP token
 (the token is stored in the OS keychain). Optional fields authorize one Obsidian
@@ -125,7 +125,7 @@ already present:
 ```json
 {
   "mcpServers": {
-    "auroradocs": {
+    "aurora": {
       "command": "npx",
       "args": ["-y", "@henrikogard/auroradocs-mcp@0.3.0"],
       "env": {
@@ -150,10 +150,10 @@ Options must appear before the server name:
 claude mcp add --transport stdio --scope user \
   --env AURORA_API_URL=https://api.aurora.ink \
   --env AURORA_API_TOKEN=REDACTED \
-  auroradocs -- npx -y @henrikogard/auroradocs-mcp@0.3.0
+  aurora -- npx -y @henrikogard/auroradocs-mcp@0.3.0
 ```
 
-Run `claude mcp get auroradocs` to inspect the saved entry, then use `/mcp` in
+Run `claude mcp get aurora` to inspect the saved entry, then use `/mcp` in
 Claude Code to check its connection. See Anthropic's current
 [Claude Code MCP documentation](https://code.claude.com/docs/en/mcp).
 
@@ -165,10 +165,10 @@ The installed Codex CLI accepts `--env` for local stdio servers:
 codex mcp add \
   --env AURORA_API_URL=https://api.aurora.ink \
   --env AURORA_API_TOKEN=REDACTED \
-  auroradocs -- npx -y @henrikogard/auroradocs-mcp@0.3.0
+  aurora -- npx -y @henrikogard/auroradocs-mcp@0.3.0
 ```
 
-Run `codex mcp get auroradocs` to inspect the saved entry.
+Run `codex mcp get aurora` to inspect the saved entry.
 
 ### Other stdio clients
 

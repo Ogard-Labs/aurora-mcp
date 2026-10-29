@@ -51,8 +51,8 @@ the importer.
 ## Verify each client
 
 - Claude Desktop: restart the app after editing its local MCP configuration.
-- Claude Code: run `claude mcp get auroradocs`, then inspect `/mcp`.
-- Codex: run `codex mcp get auroradocs`.
+- Claude Code: run `claude mcp get aurora`, then inspect `/mcp`.
+- Codex: run `codex mcp get aurora`.
 - Generic clients: confirm they support local stdio processes and pass the
   `env` object to the child process.
 
