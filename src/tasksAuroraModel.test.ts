@@ -322,6 +322,20 @@ test('next due date steps the rule like Aurora and keeps the time of day', () =>
   assert.deepEqual(nextRecurrenceDue('FREQ=DAILY', null, new Date(2026, 9, 11, 15)), { date: '2026-10-12', dueDate: '2026-10-12' })
 })
 
+test('a rule with a value the parser drops is left to Aurora instead of being stepped on a wrong schedule', async () => {
+  assert.equal(nextRecurrenceDue('FREQ=DAILY;UNTIL=bogus', '2026-10-11'), null)
+  assert.equal(nextRecurrenceDue('FREQ=DAILY;INTERVAL=0', '2026-10-11'), null)
+  const cloud = new FakeCloud()
+  seedRecurring(cloud)
+  cloud.props.find((prop) => prop.object_id === 'task-1' && prop.key === 'recurrence')!['value_text'] = 'FREQ=DAILY;UNTIL=bogus'
+  await withCloud(cloud, async () => {
+    const result = await executeToolCall('update_task', { id: 'task-1', status: 'Done' }, WS) as { next_occurrence?: unknown }
+    assert.equal(result.next_occurrence, undefined)
+  })
+  assert.equal(cloud.writes.filter((write) => write.startsWith('POST /api/collections/objects')).length, 0)
+  assert.equal(cloud.propsOf('task-1')['recurrence']?.value_text, 'FREQ=DAILY;UNTIL=bogus')
+})
+
 test('the next occurrence id matches the formula Aurora uses', () => {
   assert.equal(recurrenceSuccessorId('task-1', '2026-10-12'), 'b1f86d8d840c60d')
 })
