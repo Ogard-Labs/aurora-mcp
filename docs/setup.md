@@ -1,7 +1,7 @@
 # Setup
 
 This guide connects a local MCP client to owner-approved AuroraCloud workspace
-grants with `@henrikogard/auroradocs-mcp@0.3.1`. The server runs locally over
+grants with `@ogard-labs/aurora-mcp@0.4.0`. The server runs locally over
 stdio; it is not a hosted MCP endpoint.
 
 ## Requirements
@@ -63,7 +63,7 @@ Every new client entry provides these values:
 | `AURORA_API_URL` | `https://api.aurora.ink` |
 | `AURORA_API_TOKEN` | the one-time `aur_mcp_client_` credential |
 
-For the `0.3.1` Obsidian importer, add these only after backing up the source
+For the `0.4.0` Obsidian importer, add these only after backing up the source
 vault and choosing a test destination:
 
 | Variable | Value |
@@ -81,7 +81,7 @@ Generic stdio configuration:
 ```json
 {
   "command": "npx",
-  "args": ["-y", "@henrikogard/auroradocs-mcp@0.3.1"],
+  "args": ["-y", "@ogard-labs/aurora-mcp@0.4.0"],
   "env": {
     "AURORA_API_URL": "https://api.aurora.ink",
     "AURORA_API_TOKEN": "REDACTED"
@@ -164,7 +164,7 @@ servers, then restart Claude Desktop:
   "mcpServers": {
     "aurora": {
       "command": "npx",
-      "args": ["-y", "@henrikogard/auroradocs-mcp@0.3.1"],
+      "args": ["-y", "@ogard-labs/aurora-mcp@0.4.0"],
       "env": {
         "AURORA_API_URL": "https://api.aurora.ink",
         "AURORA_WORKSPACE_ID": "WORKSPACE_ID",
@@ -182,7 +182,7 @@ claude mcp add --transport stdio --scope user \
   --env AURORA_API_URL=https://api.aurora.ink \
   --env AURORA_WORKSPACE_ID=WORKSPACE_ID \
   --env AURORA_API_TOKEN=REDACTED \
-  aurora -- npx -y @henrikogard/auroradocs-mcp@0.3.1
+  aurora -- npx -y @ogard-labs/aurora-mcp@0.4.0
 ```
 
 Run `claude mcp get aurora` to inspect the saved entry.
@@ -194,7 +194,7 @@ codex mcp add \
   --env AURORA_API_URL=https://api.aurora.ink \
   --env AURORA_WORKSPACE_ID=WORKSPACE_ID \
   --env AURORA_API_TOKEN=REDACTED \
-  aurora -- npx -y @henrikogard/auroradocs-mcp@0.3.1
+  aurora -- npx -y @ogard-labs/aurora-mcp@0.4.0
 ```
 
 Run `codex mcp get aurora` to inspect the saved entry.

@@ -7,7 +7,7 @@ test('Claude Desktop extension manifest is a local stdio bundle with a keychain 
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
 
   assert.equal(manifest.manifest_version, '0.3')
-  assert.equal(manifest.name, 'auroradocs')
+  assert.equal(manifest.name, 'aurora')
   assert.equal(manifest.version, pkg.version)
   assert.equal(manifest.server.type, 'node')
   assert.equal(manifest.server.entry_point, 'dist/index.js')

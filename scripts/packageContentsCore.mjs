@@ -13,8 +13,8 @@ const REQUIRED_PATHS = [
 ]
 
 export function validatePackageManifest({ name, version, bin, paths }) {
-  assert.equal(name, '@henrikogard/auroradocs-mcp', 'npm package name must be @henrikogard/auroradocs-mcp')
-  assert.equal(version, '0.3.1', 'npm package version must be 0.3.1')
+  assert.equal(name, '@ogard-labs/aurora-mcp', 'npm package name must be @ogard-labs/aurora-mcp')
+  assert.equal(version, '0.4.0', 'npm package version must be 0.4.0')
   assert.deepEqual(bin, { 'aurora-mcp': 'dist/index.js' }, 'npm executable mapping is incorrect')
 
   for (const requiredPath of REQUIRED_PATHS) {
@@ -22,7 +22,7 @@ export function validatePackageManifest({ name, version, bin, paths }) {
   }
 
   const forbidden = paths.filter((path) =>
-    /(^|\/)(?:\.turbo|src|test)(?:\/|$)|\.test\.(?:js|d\.ts)$|(^|\/)tsconfig|auroracloudSmoke\.ts$/.test(path),
+    /(^|\/)(?:\.turbo|src|test|docs\/superpowers)(?:\/|$)|\.test\.(?:js|d\.ts)$|(^|\/)tsconfig|auroracloudSmoke\.ts$/.test(path),
   )
   assert.deepEqual(
     forbidden,

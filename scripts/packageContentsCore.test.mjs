@@ -4,8 +4,8 @@ import test from 'node:test'
 import { validatePackageManifest } from './packageContentsCore.mjs'
 
 const validManifest = {
-  name: '@henrikogard/auroradocs-mcp',
-  version: '0.3.1',
+  name: '@ogard-labs/aurora-mcp',
+  version: '0.4.0',
   bin: { 'aurora-mcp': 'dist/index.js' },
   paths: [
     'package.json',
@@ -33,6 +33,8 @@ for (const [label, mutate] of [
   ['missing agent guide', (manifest) => { manifest.paths = manifest.paths.filter((path) => path !== 'docs/agent-guide.md') }],
   ['missing required runtime path', (manifest) => { manifest.paths = manifest.paths.filter((path) => path !== 'dist/version.js') }],
   ['forbidden source path', (manifest) => { manifest.paths.push('src/index.ts') }],
+  ['internal plan', (manifest) => { manifest.paths.push('docs/superpowers/plans/plan.md') }],
+  ['old package name', (manifest) => { manifest.name = '@henrikogard/auroradocs-mcp' }],
 ]) {
   test(`package manifest rejects ${label}`, () => {
     const malformed = structuredClone(validManifest)
