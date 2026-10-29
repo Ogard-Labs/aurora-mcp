@@ -30,7 +30,7 @@ import {
   restoreObject,
   type AuroraPropertyRecord,
 } from './auroraClient.js'
-import { nextOccurrence, parseRRule } from './recurrence.js'
+import { nextOccurrence, parseRRule, rejectedRuleValues } from './recurrence.js'
 import { isEncryptedMetadataValue, openTaskStatusId, type TaskStatusDefinition } from './taskStatuses.js'
 
 export type RecurrenceAdvance =
@@ -58,14 +58,18 @@ function formatDateKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
-/** The next occurrence's date and due value, or null when the rule is unusable or has ended. */
+/**
+ * The next occurrence's date and due value, or null when the rule is unusable or
+ * has ended. A rule whose value the parser drops (`UNTIL=bogus`, `INTERVAL=0`)
+ * is unusable: stepping what is left would run a different schedule.
+ */
 export function nextRecurrenceDue(
   rule: string,
   dueDate: string | null,
   now: Date = new Date(),
 ): { date: string; dueDate: string } | null {
   const parsed = parseRRule(rule)
-  if (!parsed) return null
+  if (!parsed || rejectedRuleValues(rule).length > 0) return null
   const sourceDate = datePart(dueDate)
   const anchor = sourceDate ? new Date(`${sourceDate}T00:00:00`) : now
   const from = sourceDate ? anchor : now
