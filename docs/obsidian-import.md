@@ -28,7 +28,7 @@ Configure the local MCP child process with:
 ```json
 {
   "AURORA_OBSIDIAN_VAULT_ROOT": "/absolute/path/to/My Vault",
-  "AURORA_MCP_STATE_DIR": "/absolute/private/path/auroradocs-mcp-state"
+  "AURORA_MCP_STATE_DIR": "/absolute/private/path/aurora-mcp-state"
 }
 ```
 

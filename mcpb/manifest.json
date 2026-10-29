@@ -17,7 +17,7 @@
   "documentation": "https://github.com/henrikogaard/auroradocs-mcp/blob/main/docs/setup.md",
   "support": "https://github.com/henrikogaard/auroradocs-mcp/issues",
   "license": "Apache-2.0",
-  "keywords": ["auroradocs", "auroracloud", "workspace", "obsidian"],
+  "keywords": ["aurora", "auroradocs", "auroracloud", "workspace", "obsidian"],
   "server": {
     "type": "node",
     "entry_point": "dist/index.js",

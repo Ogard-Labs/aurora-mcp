@@ -92,7 +92,7 @@ Generic stdio configuration:
 Claude Desktop can install a local `.mcpb` bundle instead of that JSON. From a
 checkout run `pnpm pack:mcpb`, then in Claude Desktop open **Settings →
 Extensions → Advanced settings → Install Extension…** and choose
-`auroradocs.mcpb`. Enter the API URL and MCP token there. The token is stored
+`aurora.mcpb`. Enter the API URL and MCP token there. The token is stored
 in the OS keychain. Optional fields authorize one Obsidian vault and a private
 state directory.
 
@@ -162,7 +162,7 @@ servers, then restart Claude Desktop:
 ```json
 {
   "mcpServers": {
-    "auroradocs": {
+    "aurora": {
       "command": "npx",
       "args": ["-y", "@henrikogard/auroradocs-mcp@0.3.1"],
       "env": {
@@ -182,10 +182,10 @@ claude mcp add --transport stdio --scope user \
   --env AURORA_API_URL=https://api.aurora.ink \
   --env AURORA_WORKSPACE_ID=WORKSPACE_ID \
   --env AURORA_API_TOKEN=REDACTED \
-  auroradocs -- npx -y @henrikogard/auroradocs-mcp@0.3.1
+  aurora -- npx -y @henrikogard/auroradocs-mcp@0.3.1
 ```
 
-Run `claude mcp get auroradocs` to inspect the saved entry.
+Run `claude mcp get aurora` to inspect the saved entry.
 
 ### Codex
 
@@ -194,10 +194,10 @@ codex mcp add \
   --env AURORA_API_URL=https://api.aurora.ink \
   --env AURORA_WORKSPACE_ID=WORKSPACE_ID \
   --env AURORA_API_TOKEN=REDACTED \
-  auroradocs -- npx -y @henrikogard/auroradocs-mcp@0.3.1
+  aurora -- npx -y @henrikogard/auroradocs-mcp@0.3.1
 ```
 
-Run `codex mcp get auroradocs` to inspect the saved entry.
+Run `codex mcp get aurora` to inspect the saved entry.
 
 ## Verify the connection
 
