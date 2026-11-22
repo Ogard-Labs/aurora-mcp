@@ -26,8 +26,8 @@ importers:
         specifier: ^2.0.0
         version: 2.0.0
       '@types/node':
-        specifier: ^26.6.4
-        version: 26.6.4
+        specifier: ^26.6.5
+        version: 26.6.5
       tsx:
         specifier: ^4.23.15
         version: 4.23.15
@@ -209,8 +209,8 @@ packages:
     resolution: {integrity: sha512-+6b0LdsQLmHsvS7J6sQJ4weTpzUn61fU1JKS+321/+IyDYoHW5CR2Tgqcs6GgAAQvlesCo6yX3xttgmx+XGtJw==}
     engines: {node: '>=20'}
 
-  '@types/node@26.6.4':
-    resolution: {integrity: sha512-ldVPDCzj7fsaGZrLB0NuHuTvJcsNasysBAqMolr/cgxrLd1xbqxIr3XJiPnHHJUCxj5sNF1vnRj9aWnrVh5Jcg==}
+  '@types/node@26.6.5':
+    resolution: {integrity: sha512-uMzsv9stDdofIZBx4UGh4Z9ZgXnGC9seRDscilBcTHAeOFk67MZg/k9bWVfO+bk4qZmG+l52hRnLwUiH2LnJTg==}
 
   '@typescript/typescript-aix-ppc64@7.0.2':
     resolution: {integrity: sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ==}
@@ -505,7 +505,7 @@ snapshots:
       '@modelcontextprotocol/core': 2.3.0
       zod: 4.6.6
 
-  '@types/node@26.6.4':
+  '@types/node@26.6.5':
     dependencies:
       undici-types: 8.9.0
 
