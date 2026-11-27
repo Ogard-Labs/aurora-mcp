@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { AURORA_CONTRACT, AURORA_ROUTES, auroraRoute, TASK_LIST_PROPERTY_KEYS, TASK_PROPERTY_KEYS } from './auroraContract.js'
 // @ts-expect-error plain JavaScript script without types
-import { checkDrift, collapse, containsWhole, endsLine, formatDrift, stripComments } from '../scripts/auroraDrift.mjs'
+import { checkDrift, collapse, containsWhole, endsLine, findInCode, formatDrift, scanSource, stripComments } from '../scripts/auroraDrift.mjs'
 
 test('every contract entry has a unique id and source text that holds the value the code uses', () => {
   const ids = AURORA_CONTRACT.map((entry) => entry.id)
@@ -280,7 +280,8 @@ test('a Unicode name is read as one name (#49 review)', async () => {
   assert.equal(containsWhole('VERSION = 1 ', 'VERSION = 1'), true)
 })
 
-test('a rejected match after an emoji does not stall the search (#49 review)', { timeout: 5000 }, async () => {
+// A test timeout cannot stop a synchronous loop, so the search itself throws if it stops advancing.
+test('a rejected match after an emoji does not stall the search (#49 review)', async () => {
   const version = AURORA_CONTRACT.find((entry) => entry.id === 'task-status-config-version')
   assert.ok(version)
   const stale = `const example = '📌${version.source}';\nexport const TASK_STATUS_CONFIG_VERSION = 2\n`
@@ -301,4 +302,28 @@ test('a slash after a postfix ++ or -- divides (#49 review)', async () => {
   assert.equal(stripComments('n = /a/ / 2 /* c */'), 'n = /a/ / 2        ')
   // A prefix ++ still lets a regex start where an operand is expected.
   assert.equal(stripComments('x = ++/a/.lastIndex // c'), 'x = ++/a/.lastIndex     ')
+})
+
+test('a declaration quoted in a string or template does not stand in for the live one (#49 review)', async () => {
+  const version = AURORA_CONTRACT.find((entry) => entry.id === 'task-status-config-version')
+  const marker = AURORA_CONTRACT.find((entry) => entry.id === 'e2ee-marker')
+  assert.ok(version && marker)
+  for (const quoted of [
+    `const example = \`\n${version.source};\n\``,
+    `const example = \`\${x}\n${version.source}\n\``,
+    `const example = '${version.source}'`,
+    `const example = "${version.source}"`,
+  ]) {
+    const stale = `${quoted}\nexport const TASK_STATUS_CONFIG_VERSION = 2\n`
+    assert.equal((await checkDrift([version], '/checkout', async () => stale)).length, 1, quoted)
+    const live = `${quoted}\n${version.source}\n`
+    assert.deepEqual(await checkDrift([version], '/checkout', async () => live), [], quoted)
+  }
+  // An entry without lineEnd is held to the same rule.
+  const loose = { ...marker, lineEnd: false }
+  assert.equal((await checkDrift([loose], '/checkout', async () => `const doc = \`${marker.source}\`\n`)).length, 1)
+  // Code inside a template's `${...}` is code.
+  const { literal } = scanSource('const t = `a ${b} c`')
+  assert.equal([...literal].join(''), '00000000000110000110')
+  assert.equal(findInCode('`x ${ VERSION = 1 }`', 'VERSION = 1', scanSource('`x ${ VERSION = 1 }`').literal), true)
 })

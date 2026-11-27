@@ -48,7 +48,21 @@ function endsWithKeyword(text, pattern) {
  * comment never stands in for the live code.
  */
 export function stripComments(source) {
+  return scanSource(source).code
+}
+
+/**
+ * The lexer behind `stripComments`. Returns `code` (the source with comments
+ * blanked, the same length as `source`) and `literal`, which marks with 1 each
+ * position that is the text inside a string, template or regex literal. Quotes,
+ * backticks and `${...}` interpolations are code. A drift match must start in
+ * code, so an old declaration quoted in a string or template never stands in
+ * for the live one.
+ */
+export function scanSource(source) {
   let out = ''
+  const literal = new Uint8Array(source.length)
+  const markLiteral = (start, stop) => literal.fill(1, start, Math.min(stop, source.length))
   let index = 0
   // One entry per open `${`: the brace depth inside that interpolation.
   const interpolations = []
@@ -66,9 +80,10 @@ export function stripComments(source) {
     let stop = index
     while (stop < source.length && source[stop] !== '`') {
       if (source[stop] === '\\') { stop += 2; continue }
-      if (source[stop] === '$' && source[stop + 1] === '{') { take(stop + 2); interpolations.push(0); return }
+      if (source[stop] === '$' && source[stop + 1] === '{') { markLiteral(index, stop); take(stop + 2); interpolations.push(0); return }
       stop += 1
     }
+    markLiteral(index, stop)
     take(Math.min(stop + 1, source.length))
   }
   const regexMayStart = () => {
@@ -101,6 +116,7 @@ export function stripComments(source) {
     } else if (char === "'" || char === '"') {
       let stop = index + 1
       while (stop < source.length && source[stop] !== char && source[stop] !== '\n') stop += source[stop] === '\\' ? 2 : 1
+      markLiteral(index + 1, stop)
       take(Math.min(stop + 1, source.length))
     } else if (char === '`') {
       take(index + 1)
@@ -132,13 +148,14 @@ export function stripComments(source) {
         else if (source[stop] === '/' && !inClass) break
         stop += 1
       }
+      markLiteral(index + 1, stop)
       take(Math.min(stop + 1, source.length))
       regexEnd = out.length
     } else {
       take(index + 1)
     }
   }
-  return out
+  return { code: out, literal }
 }
 
 /**
@@ -173,17 +190,35 @@ export function containsWhole(text, needle) {
  * `return`, `throw` or `yield`, where only same-line whitespace (a no-break
  * space too) may sit, since a line break would end the statement.
  */
-export function endsLine(raw, needle) {
+export function endsLine(raw, needle, literal) {
+  return findInCode(raw, needle, literal, true)
+}
+
+/**
+ * Whether `needle` (runs of whitespace matching any whitespace) appears in
+ * `raw` starting in code, where `literal` marks string, template and regex
+ * text. With `statement`, the match must also end the statement (see
+ * `endsLine`); without, it must only not run on into a longer name.
+ */
+export function findInCode(raw, needle, literal, statement = false) {
   const words = collapse(needle).split(' ').filter(Boolean)
   if (words.length < 1) return false
   const escape = (word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const body = words.map((word, index) => index === 0
     ? escape(word)
     : `${/^(?:return|throw|yield)$/.test(words[index - 1]) ? '[^\\S\\r\\n\\u2028\\u2029]+' : '\\s+'}${escape(word)}`).join('')
-  const pattern = new RegExp(`${NOT_NAME}${body}`, 'gu')
+  const end = new RegExp(NAME, 'u').test(words[words.length - 1].slice(-1)) ? `(?!${NAME})` : ''
+  const pattern = new RegExp(`${NOT_NAME}(${body})${end}`, 'gu')
+  let last = -1
   for (let match = pattern.exec(raw); match; match = pattern.exec(raw)) {
+    // Each step must move forward; a regression here must fail, not hang the check.
+    if (match.index <= last) throw new Error('drift check stopped advancing')
+    last = match.index
+    const start = match.index + match[0].length - match[1].length
+    const inCode = !literal || !literal[start]
+    if (inCode && !statement) return true
     const tail = /^(?:[ \t]|\/\*(?:[^*\n]|\*(?!\/))*\*\/)*(?:([;}])|(?:\/\/[^\n]*)?(?:\r?\n|$))/.exec(raw.slice(match.index + match[0].length))
-    if (tail && (tail[1] || !continuesExpression(raw.slice(match.index + match[0].length + tail[0].length)))) return true
+    if (inCode && tail && (tail[1] || !continuesExpression(raw.slice(match.index + match[0].length + tail[0].length)))) return true
     // Step one whole code point, so a search never restarts inside a surrogate pair (which the `u` flag would read back to the same match).
     pattern.lastIndex = match.index + String.fromCodePoint(raw.codePointAt(match.index)).length
   }
@@ -208,12 +243,12 @@ export async function checkDrift(entries, root, read = (file) => readFile(file, 
     const file = path.join(root, entry.file)
     if (!cache.has(file)) {
       // Comments are blanked first: only live code can match an entry.
-      cache.set(file, read(file).then(stripComments).then((raw) => ({ raw, text: collapse(raw) }), (error) => ({ missing: error?.code ?? String(error) })))
+      cache.set(file, read(file).then(scanSource).then(({ code, literal }) => ({ raw: code, literal, text: collapse(code) }), (error) => ({ missing: error?.code ?? String(error) })))
     }
     const loaded = await cache.get(file)
     if ('missing' in loaded) {
       drifted.push({ entry, reason: `${entry.file} could not be read (${loaded.missing}); it may have moved` })
-    } else if (!containsWhole(loaded.text, collapse(entry.source)) || (entry.lineEnd && !endsLine(loaded.raw, entry.source))) {
+    } else if (!containsWhole(loaded.text, collapse(entry.source)) || !findInCode(loaded.raw, entry.source, loaded.literal, entry.lineEnd)) {
       drifted.push({ entry, reason: `${entry.file} no longer contains: ${collapse(entry.source)}` })
     }
   }
