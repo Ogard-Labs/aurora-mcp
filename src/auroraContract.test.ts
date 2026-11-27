@@ -151,3 +151,15 @@ test('a statement continued on the next line is drift too (#49 review)', () => {
   // A later whole copy still counts when an earlier one is continued.
   assert.equal(endsLine(`${needle}\n+ 'x'\n${needle}\n`, needle), true)
 })
+
+test('every entry that is one whole statement must end its line, formulas too (#49 review)', async () => {
+  for (const entry of AURORA_CONTRACT.filter((item) => /^(export )?(const|return) /.test(collapse(item.source)) && !/[{,]$/.test(collapse(item.source)))) {
+    assert.ok(entry.lineEnd, `${entry.id} ends its line`)
+  }
+  const successor = AURORA_CONTRACT.find((entry) => entry.id === 'recurrence-successor-id')
+  assert.ok(successor)
+  const extended = async () => `${successor.source} + ':v2'\n`
+  assert.equal((await checkDrift([successor], '/checkout', extended)).length, 1)
+  const same = async () => `${successor.source}\n}\n`
+  assert.deepEqual(await checkDrift([successor], '/checkout', same), [])
+})

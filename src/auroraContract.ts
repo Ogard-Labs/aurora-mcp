@@ -146,6 +146,7 @@ export const AURORA_CONTRACT: readonly AuroraContractEntry[] = [
     file: 'packages/core/src/lib/workspaceConfigObject.ts',
     source: "const HIDDEN_SYSTEM_OBJECT_TYPES: ReadonlySet<string> = new Set([WORKSPACE_CONFIG_OBJECT_TYPE, 'task_list'])",
     usedBy: ['src/objectTypes.ts'],
+    lineEnd: true,
   },
   {
     id: 'hidden-object-types-api',
@@ -154,6 +155,7 @@ export const AURORA_CONTRACT: readonly AuroraContractEntry[] = [
     file: 'apps/api/src/lib/hiddenObjects.ts',
     source: "const HIDDEN_SYSTEM_OBJECT_TYPES: ReadonlySet<string> = new Set(['workspace_config', 'task_list'])",
     usedBy: ['src/objectTypes.ts'],
+    lineEnd: true,
   },
   {
     id: 'workspace-config-type',
@@ -221,6 +223,7 @@ export const AURORA_CONTRACT: readonly AuroraContractEntry[] = [
       + ` ${BUILTIN_TASK_STATUS_LIST.slice(0, 3).map((status) => `{ id: '${status.id}', group: '${status.group}' },`).join(' ')}`
       + " { id: LEGACY_DONE_TASK_STATUS, group: 'done' }, ]",
     usedBy: ['src/taskStatuses.ts'],
+    lineEnd: true,
   },
   {
     id: 'e2ee-marker',
@@ -238,6 +241,7 @@ export const AURORA_CONTRACT: readonly AuroraContractEntry[] = [
     file: TASKS_FILE,
     source: `return (await sha256(\`${RECURRENCE_SUCCESSOR_ID_SEED}\\n\${sourceTaskId}\\n\${occurrenceDate}\`)).slice(0, ${RECURRENCE_SUCCESSOR_ID_LENGTH})`,
     usedBy: ['src/taskRecurrence.ts'],
+    lineEnd: true,
   },
   {
     id: 'error-email-verification-required',
