@@ -56,6 +56,8 @@ export function stripComments(source) {
   // condition, after which a `/` starts a regex rather than dividing.
   const parens = []
   let closedControl = false
+  // Where the last regex literal ended in `out`, so its closing `/` is not read as a division sign.
+  let regexEnd = -1
   const blank = (text) => text.replace(/[^\r\n\u2028\u2029]/g, ' ')
   const take = (stop) => { out += source.slice(index, stop); index = stop }
   // Reads a template literal from just after its opening backtick, up to its
@@ -74,6 +76,13 @@ export function stripComments(source) {
     if (!before) return true
     if (ENDS_WITH_NAME.test(before)) return endsWithKeyword(before, REGEX_AFTER_WORD)
     if (before.endsWith(')')) return closedControl
+    // A postfix `++` or `--` (after a name or a closing bracket) ends an operand, so a `/` after it divides.
+    if (/(?:\+\+|--)$/.test(before)) {
+      const operand = before.slice(0, -2).replace(/\s+$/, '')
+      if (ENDS_WITH_NAME.test(operand) || /[)\]]$/.test(operand)) return false
+    }
+    // A `/` that divides is an operator, so a regex may follow; the closing `/` of a regex is not one.
+    if (before.endsWith('/')) return before.length !== regexEnd
     return /[(,=:[!&|?{};+\-*%<>~^]$/.test(before)
   }
   while (index < source.length) {
@@ -124,6 +133,7 @@ export function stripComments(source) {
         stop += 1
       }
       take(Math.min(stop + 1, source.length))
+      regexEnd = out.length
     } else {
       take(index + 1)
     }

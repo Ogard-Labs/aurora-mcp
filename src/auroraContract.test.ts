@@ -289,3 +289,16 @@ test('a rejected match after an emoji does not stall the search (#49 review)', {
   assert.deepEqual(await checkDrift([version], '/checkout', async () => live), [])
   assert.equal(endsLine(`'📌${version.source}'\n${version.source}\n`, version.source), true)
 })
+
+test('a slash after a postfix ++ or -- divides (#49 review)', async () => {
+  const version = AURORA_CONTRACT.find((entry) => entry.id === 'task-status-config-version')
+  assert.ok(version)
+  for (const operand of ['count++', 'count--', 'items[0]++', '(count)--']) {
+    const text = `const ratio = ${operand} / /[/*]/.source.length\n${version.source}\n`
+    assert.deepEqual(await checkDrift([version], '/checkout', async () => text), [], operand)
+  }
+  // The closing `/` of a regex is not a division sign: the `/` after it divides, and the comment stays a comment.
+  assert.equal(stripComments('n = /a/ / 2 /* c */'), 'n = /a/ / 2        ')
+  // A prefix ++ still lets a regex start where an operand is expected.
+  assert.equal(stripComments('x = ++/a/.lastIndex // c'), 'x = ++/a/.lastIndex     ')
+})
