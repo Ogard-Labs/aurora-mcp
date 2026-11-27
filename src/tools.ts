@@ -1119,7 +1119,10 @@ async function executeToolCallUnsafe(
         if (description === null && taskProps.description) encrypted.push('description')
         const readableRule = recurrence && !isEncryptedMetadataValue(recurrence) ? recurrence : null
         const completed = isCompletedTaskStatus(row.status, statuses.judged)
-        const next = readableRule && !completed
+        // The forecast is anchored on the due date and only holds for an open
+        // task: with either of them encrypted it is unknown, so none is given.
+        const anchorHidden = encrypted.includes('due_date') || encrypted.includes('status')
+        const next = readableRule && !completed && !anchorHidden
           ? nextRecurrenceDue(readableRule, row.due_date)
           : null
         // A completed repeating task has lost its rule; the occurrence its

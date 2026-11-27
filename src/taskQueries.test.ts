@@ -32,13 +32,19 @@ function objectRecord(task: Task) {
   }
 }
 
+/** Tasks whose due date is stored end-to-end encrypted (as text, the way the app seals it). */
+const sealedDueDates = new Set<string>()
+
 function propertyRows(task: Task) {
-  return Object.entries(task.props).map(([key, value], index) => ({
+  const sealed = sealedDueDates.has(task.id)
+    ? [{ id: `${task.id}-sealed-due`, object_id: task.id, workspace_id: 'workspace-1', key: 'due_date', value_type: 'text', value_text: ENCRYPTED, value_num: null, value_date: null, value_bool: null, value_ref: null, updated_at: '2026-07-06T10:00:00.000Z' }]
+    : []
+  return [...sealed, ...Object.entries(task.props).map(([key, value], index) => ({
     id: `${task.id}-p${index}`, object_id: task.id, workspace_id: 'workspace-1', key,
     value_type: key === 'due_date' ? 'date' : 'text', value_text: key === 'due_date' ? null : value,
     value_num: null, value_date: key === 'due_date' ? value : null, value_bool: null, value_ref: null,
     updated_at: '2026-07-06T10:00:00.000Z',
-  }))
+  }))]
 }
 
 const TASK_LIST_OBJECTS = [
@@ -291,5 +297,26 @@ test('get_task on a completed repeating task names the occurrence its completion
     })
   } finally {
     TASKS.splice(TASKS.length - added.length, added.length)
+  }
+})
+
+test('get_task gives no forecast when the due date or status it depends on is encrypted', async () => {
+  const added: Task[] = [
+    { id: 'task-sealed-due', title: 'Rent', updated_at: '2026-07-01T10:00:00.000Z', props: { status: 'Todo', recurrence: 'FREQ=MONTHLY' } },
+    { id: 'task-sealed-status', title: 'Rent', updated_at: '2026-07-01T10:00:00.000Z', props: { status: ENCRYPTED, due_date: '2026-07-01', recurrence: 'FREQ=MONTHLY' } },
+  ]
+  TASKS.push(...added)
+  sealedDueDates.add('task-sealed-due')
+  try {
+    await withFake(async () => {
+      for (const id of ['task-sealed-due', 'task-sealed-status']) {
+        const result = await executeToolCall('get_task', { id }, 'workspace-1') as unknown as { task: Record<string, unknown> }
+        assert.equal(result.task['next_occurrence'], null, id)
+        assert.equal(result.task['recurrence'], 'FREQ=MONTHLY')
+      }
+    })
+  } finally {
+    TASKS.splice(TASKS.length - added.length, added.length)
+    sealedDueDates.clear()
   }
 })
