@@ -360,33 +360,32 @@ test('an undone marker or a reopened task is not recurring, and a sealed marker 
 })
 
 test('a list whose name is encrypted can be filtered by its exact id, never by a guess', async () => {
+  const sizes = [TASK_LIST_OBJECTS.length, LIST_ID_PROPS.length, TASKS.length]
   TASK_LIST_OBJECTS.push({ id: 'list-obj-sealed', workspace_id: 'workspace-1', type: 'task_list', title: ENCRYPTED, icon: null, parent_id: null, is_deleted: false, is_template: false, created_at: '2026-07-01T09:02:00.000Z', updated_at: '2026-07-01T09:02:00.000Z' })
   LIST_ID_PROPS.push({ id: 'lp-3', object_id: 'list-obj-sealed', workspace_id: 'workspace-1', key: 'list_id', value_type: 'text', value_text: 'list-sealed', value_num: null, value_date: null, value_bool: null, value_ref: null })
   TASKS.push({ id: 'task-in-sealed', title: 'Hidden list task', updated_at: '2026-07-01T10:00:00.000Z', props: { status: 'Todo', task_list_id: 'list-sealed' } })
   try {
     await withFake(async () => {
       assert.deepEqual(ids(await listTasks({ task_list: 'list-sealed' })), ['task-in-sealed'])
+      const guess = await listTasks({ task_list: 'list-seal' }) as unknown as Record<string, unknown>
+      assert.equal(guess['code'], 'invalid_input', JSON.stringify(guess))
+      assert.match(String(guess['message']), /exact id/)
       // A readable list whose name merely contains the id does not outrank it.
       TASK_LIST_OBJECTS.push({ id: 'list-obj-decoy', workspace_id: 'workspace-1', type: 'task_list', title: 'Old list-sealed notes', icon: null, parent_id: null, is_deleted: false, is_template: false, created_at: '2026-07-01T09:04:00.000Z', updated_at: '2026-07-01T09:04:00.000Z' })
       LIST_ID_PROPS.push({ id: 'lp-5', object_id: 'list-obj-decoy', workspace_id: 'workspace-1', key: 'list_id', value_type: 'text', value_text: 'list-decoy', value_num: null, value_date: null, value_bool: null, value_ref: null })
       assert.deepEqual(ids(await listTasks({ task_list: 'list-sealed' })), ['task-in-sealed'])
-      TASK_LIST_OBJECTS.pop()
-      LIST_ID_PROPS.pop()
       // The same for an unconverted list in the legacy table, and its name stays hidden.
       LEGACY_LISTS.push({ id: 'list-old', name: ENCRYPTED, default_status: null })
       TASKS.push({ id: 'task-in-old', title: 'Old list task', updated_at: '2026-07-01T10:00:00.000Z', props: { status: 'Todo', task_list_id: 'list-old' } })
       const old = await listTasks({ task_list: 'list-old' })
       assert.deepEqual(ids(old), ['task-in-old'])
       assert.deepEqual(old.tasks[0]?.['task_list'], { id: 'list-old', name: null })
-      const guess = await listTasks({ task_list: 'list-seal' }) as unknown as Record<string, unknown>
-      assert.equal(guess['code'], 'invalid_input', JSON.stringify(guess))
-      assert.match(String(guess['message']), /exact id/)
     })
   } finally {
-    TASK_LIST_OBJECTS.pop()
-    LIST_ID_PROPS.pop()
-    if (TASKS.at(-1)?.id === 'task-in-old') TASKS.pop()
-    TASKS.pop()
+    // Back to the fixtures as they were, whichever assertion failed.
+    TASK_LIST_OBJECTS.length = sizes[0]!
+    LIST_ID_PROPS.length = sizes[1]!
+    TASKS.length = sizes[2]!
     LEGACY_LISTS.length = 0
   }
 })
