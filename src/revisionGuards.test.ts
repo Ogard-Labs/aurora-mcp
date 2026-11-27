@@ -20,6 +20,10 @@ type FakeState = {
   objectType?: string
   /** Answer the next write with AuroraCloud's 409 for a changed record. */
   conflictOnWrite?: boolean
+  /** Answer only this write (counted from 1) with the 409. */
+  conflictOnWriteNumber?: number
+  extraProperties?: Record<string, unknown>[]
+  contentJson?: Record<string, unknown>
   writes: Write[]
 }
 
@@ -41,13 +45,13 @@ function handler(state: FakeState) {
         id: 'prop-1', object_id: 'obj-1', workspace_id: 'workspace-1', key: 'Stage', value_type: 'text',
         value_text: 'Draft', value_num: null, value_date: null, value_bool: null, value_ref: null,
         updated_at: state.propertyUpdatedAt,
-      }]))
+      }, ...(state.extraProperties ?? [])]))
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/collections/content/records') {
       res.end(list([{
         id: 'content-1', object_id: 'obj-1', workspace_id: 'workspace-1', updated_at: CONTENT_UPDATED_AT,
-        content_json: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Old line' }] }] },
+        content_json: state.contentJson ?? { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Old line' }] }] },
       }]))
       return
     }
@@ -56,7 +60,7 @@ function handler(state: FakeState) {
       req.on('data', (chunk) => { body += String(chunk) })
       req.on('end', () => {
         state.writes.push({ method: req.method ?? '', path: url.pathname, body: JSON.parse(body) as Record<string, unknown> })
-        if (state.conflictOnWrite) {
+        if (state.conflictOnWrite || state.conflictOnWriteNumber === state.writes.length) {
           res.statusCode = 409
           res.end(JSON.stringify({ message: 'The record changed on AuroraCloud; refresh before retrying this write.' }))
           return
@@ -220,5 +224,90 @@ test('update_task with a matching expected_updated_at guards its title write', a
     assert.equal(result.type, 'task_updated')
     const titleWrite = state.writes.find((w) => w.path === '/api/collections/objects/records/obj-1')
     assert.deepEqual(titleWrite?.body['_expected_record'], { updated_at: OBJECT_UPDATED_AT })
+  })
+})
+
+test('a conflict partway through update_object names what was already saved, with the revision now', async () => {
+  const state = { ...freshState(), conflictOnWriteNumber: 2 }
+  await withFake(state, async () => {
+    const result = await executeToolCall('update_object', {
+      id: 'obj-1', title: 'New title', text: 'New line', expected_updated_at: PROPERTY_UPDATED_AT,
+    }, 'workspace-1') as Record<string, unknown>
+    assert.equal(result['code'], 'conflict')
+    assert.deepEqual(result['saved_fields'], ['title'])
+    assert.equal(result['current_updated_at'], PROPERTY_UPDATED_AT)
+    assert.match(String(result['message']), /already saved before the conflict: title/)
+  })
+})
+
+test('a conflict on the only write still carries the revision now', async () => {
+  const state = { ...freshState(), conflictOnWrite: true }
+  await withFake(state, async () => {
+    const result = await executeToolCall('set_content', { id: 'obj-1', text: 'New line', expected_updated_at: PROPERTY_UPDATED_AT }, 'workspace-1') as Record<string, unknown>
+    assert.equal(result['code'], 'conflict')
+    assert.equal(result['current_updated_at'], PROPERTY_UPDATED_AT)
+    assert.equal('saved_fields' in result, false)
+  })
+})
+
+const PRIORITY_ROW = {
+  id: 'prop-priority', object_id: 'obj-1', workspace_id: 'workspace-1', key: 'priority', value_type: 'text',
+  value_text: 'low', value_num: null, value_date: null, value_bool: null, value_ref: null, updated_at: '2026-07-01T09:00:00.000Z',
+}
+
+test('update_task with expected_updated_at writes each field only over the row it checked', async () => {
+  const state = { ...freshState(), objectType: 'task', extraProperties: [PRIORITY_ROW] }
+  await withFake(state, async () => {
+    const result = await executeToolCall('update_task', {
+      id: 'obj-1', priority: 'high', description: 'Handoff notes', expected_updated_at: PROPERTY_UPDATED_AT,
+    }, 'workspace-1') as Record<string, unknown>
+    assert.equal(result['type'], 'task_updated', JSON.stringify(result))
+    const priority = state.writes.find((w) => w.path === '/api/collections/object_properties/records/prop-priority')
+    assert.deepEqual(priority?.body['_expected_record'], { updated_at: PRIORITY_ROW.updated_at })
+    const description = state.writes.find((w) => w.method === 'POST' && w.body['key'] === 'description')
+    assert.equal(description?.body['_expected_record'], null, 'a field with no row is created only if still none')
+  })
+})
+
+test('a conflict partway through update_task names the fields already saved', async () => {
+  const state = { ...freshState(), objectType: 'task', extraProperties: [PRIORITY_ROW], conflictOnWriteNumber: 2 }
+  await withFake(state, async () => {
+    const result = await executeToolCall('update_task', {
+      id: 'obj-1', priority: 'high', description: 'Handoff notes', expected_updated_at: PROPERTY_UPDATED_AT,
+    }, 'workspace-1') as Record<string, unknown>
+    assert.equal(result['code'], 'conflict')
+    assert.deepEqual(result['saved_fields'], ['priority'])
+  })
+})
+
+for (const tool of ['set_content', 'update_object'] as const) {
+  test(`${tool} refuses a dry_run that is not true or false, before any write`, async () => {
+    const state = freshState()
+    await withFake(state, async () => {
+      const result = await executeToolCall(tool, { id: 'obj-1', text: 'New line', dry_run: 'true' }, 'workspace-1') as Record<string, unknown>
+      assert.equal(result['code'], 'invalid_input')
+      assert.match(String(result['message']), /dry_run must be true or false/)
+      assert.deepEqual(state.writes, [])
+    })
+  })
+}
+
+test('a dry run names the formatting and embeds a plain-text replacement drops, even with the same text', async () => {
+  const state = {
+    ...freshState(),
+    contentJson: {
+      type: 'doc',
+      content: [
+        { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Equipment guide', marks: [{ type: 'bold' }] }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'See' }, { type: 'attachment', attrs: { id: 'file-1' } }] },
+      ],
+    },
+  }
+  await withFake(state, async () => {
+    const result = await executeToolCall('set_content', { id: 'obj-1', text: 'Equipment guide\nSee', dry_run: true }, 'workspace-1') as Record<string, unknown>
+    const content = result['content'] as Record<string, unknown>
+    assert.deepEqual(content['first_changed_lines'], [])
+    assert.deepEqual(content['replaced_formatting'], ['attachment', 'heading', 'mark:bold'])
+    assert.deepEqual(state.writes, [])
   })
 })

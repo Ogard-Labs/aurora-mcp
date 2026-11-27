@@ -28,6 +28,8 @@ export type ToolErrorResult = {
   retryable: boolean
   /** On `conflict` (#51): the object's `updated_at` now, to read again before retrying. */
   current_updated_at?: string
+  /** On `conflict` (#51): the fields an edit had already saved before the conflict stopped it. */
+  saved_fields?: string[]
 }
 
 export type GrantedWorkspace = {

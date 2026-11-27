@@ -1348,7 +1348,17 @@ export async function updateTaskProps(
   objectId: string,
   workspaceId: string,
   patch: Partial<AuroraTaskProps>,
-  options: { existingObject?: AuroraObjectRecord } = {},
+  options: {
+    existingObject?: AuroraObjectRecord
+    /**
+     * #51: the property rows the caller checked its revision against. Each
+     * write then goes only over the row it saw (or none, when it saw none), and
+     * AuroraCloud refuses it if that row changed since.
+     */
+    guardedProperties?: readonly AuroraPropertyRecord[]
+    /** Called with each key once its write landed, so a conflict can say what was saved. */
+    onSaved?: (key: string) => void
+  } = {},
 ): Promise<void> {
   const obj = options.existingObject ?? await getObject(objectId, workspaceId)
   if (!obj) throw new ToolNotFoundError(`Object ${objectId} not found in this workspace`)
@@ -1360,14 +1370,13 @@ export async function updateTaskProps(
   // undefined => skip, null/'' => clear (set value field to null), otherwise => set
   type Triple = { key: string; valueType: string; value: string | number | boolean | null }
   const triples: Triple[] = []
-  if (patch.status !== undefined) triples.push({ key: 'status', valueType: 'text', value: patch.status })
   if (patch.priority !== undefined) triples.push({ key: 'priority', valueType: 'text', value: patch.priority })
   if (patch.due_date !== undefined) triples.push({ key: 'due_date', valueType: 'date', value: patch.due_date })
   if (patch.description !== undefined) triples.push({ key: 'description', valueType: 'text', value: patch.description })
   // Aurora stores the list id as text (auroradocs tasks.ts); a ref would not be read back by the app.
   if (patch.task_list_id !== undefined) triples.push({ key: 'task_list_id', valueType: 'text', value: patch.task_list_id })
 
-  if (!triples.length && patch.assignees === undefined && patch.labels === undefined) return
+  if (!triples.length && patch.assignees === undefined && patch.labels === undefined && patch.status === undefined) return
 
   // Batch: fetch all existing properties for this object in one request, then
   // partition by key. This avoids one list request per field (N+1 within a
@@ -1418,6 +1427,16 @@ export async function updateTaskProps(
     triples.push({ key: 'tags', valueType: 'text', value: labels.length ? labels.join(',') : null })
     if (legacyLabels) triples.push({ key: 'labels', valueType: 'text', value: null })
   }
+  // The status goes last: a conflict on any other field then stops the edit
+  // before the task is marked done, so a recurring task is never left done
+  // without its next occurrence.
+  if (patch.status !== undefined) triples.push({ key: 'status', valueType: 'text', value: patch.status })
+
+  const guarded = options.guardedProperties
+  const seenRowByKey = new Map<string, AuroraPropertyRecord>()
+  for (const record of guarded ?? []) {
+    if (record.object_id === objectId && record.key && !seenRowByKey.has(record.key)) seenRowByKey.set(record.key, record)
+  }
 
   for (const { key, valueType, value } of triples) {
     const isClearing = value === null || value === ''
@@ -1428,6 +1447,21 @@ export async function updateTaskProps(
       valueType === 'ref' ? 'value_ref' :
       'value_text'
     const existingId = existingByKey.get(key)
+    if (guarded) {
+      // #51: only over the row the caller checked, or none if it saw none.
+      const seen = seenRowByKey.get(key)
+      if ((existingId ?? null) !== (seen?.id ?? null)) throw new ToolConflictError(CHANGED_ON_AURORACLOUD)
+      const values = { value_type: valueType, value_text: null, value_num: null, value_date: null, value_bool: null, value_ref: null, ...(isClearing ? {} : { [valueField]: value }) }
+      if (existingId && seen) {
+        await guardedWrite(() => client.collection('object_properties').update(existingId, { ...values, _expected_record: { updated_at: seen.updated_at } }))
+      } else if (!isClearing) {
+        await guardedWrite(() => client.collection('object_properties').create({ object_id: objectId, key, value_type: valueType, [valueField]: value, _expected_record: null }))
+      } else {
+        continue
+      }
+      options.onSaved?.(key)
+      continue
+    }
     if (existingId) {
       if (isClearing) {
         await client.collection('object_properties').update(existingId, {

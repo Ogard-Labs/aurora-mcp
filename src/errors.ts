@@ -32,7 +32,7 @@ export class ToolNotFoundError extends Error {
  * `_expected_record`. Nothing was written by the step that raised it.
  */
 export class ToolConflictError extends Error {
-  constructor(message: string, readonly currentUpdatedAt: string | null = null) {
+  constructor(message: string, readonly currentUpdatedAt: string | null = null, readonly savedFields: readonly string[] = []) {
     super(message)
     this.name = 'ToolConflictError'
   }
@@ -147,6 +147,7 @@ export function toSafeToolError(error: unknown): ToolErrorResult {
       message: error.message,
       retryable: false,
       ...(error.currentUpdatedAt ? { current_updated_at: error.currentUpdatedAt } : {}),
+      ...(error.savedFields.length ? { saved_fields: [...error.savedFields] } : {}),
     }
   }
 

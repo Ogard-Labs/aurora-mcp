@@ -135,6 +135,7 @@ const SAFE_ERROR_SCHEMA = resultSchema('error', {
   message: stringSchema,
   retryable: { type: 'boolean' },
   current_updated_at: stringSchema,
+  saved_fields: { type: 'array', items: stringSchema },
 }, ['code', 'message', 'retryable'])
 
 const DRY_RUN_SCHEMA = resultSchema('dry_run', {
@@ -161,8 +162,9 @@ const DRY_RUN_SCHEMA = resultSchema('dry_run', {
           additionalProperties: false,
         },
       },
+      replaced_formatting: { type: 'array', items: stringSchema },
     },
-    required: ['old_blocks', 'new_blocks', 'old_chars', 'new_chars', 'first_changed_lines'],
+    required: ['old_blocks', 'new_blocks', 'old_chars', 'new_chars', 'first_changed_lines', 'replaced_formatting'],
     additionalProperties: false,
   },
 }, ['id'])

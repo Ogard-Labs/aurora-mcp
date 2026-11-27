@@ -348,17 +348,76 @@ function isErrorResult(value: unknown): value is ToolErrorResult {
  * change made after this check is caught by those rows' own `_expected_record`.
  * Returns the object row's own `updated_at`, for a guarded title write.
  */
-async function assertObjectRevision(id: string, workspaceId: string, expected: string): Promise<string> {
+async function assertObjectRevision(id: string, workspaceId: string, expected: string): Promise<{ objectUpdatedAt: string; properties: AuroraPropertyRecord[] }> {
   const current = await getObject(id, workspaceId)
   if (!current) throw new ToolConflictError(`Object ${id} is no longer in this workspace.`)
-  const revision = objectRevision(current.updated_at, await listProperties([id], workspaceId))
+  const properties = await listProperties([id], workspaceId)
+  const revision = objectRevision(current.updated_at, properties)
   if (!sameInstant(revision, expected)) {
     throw new ToolConflictError(
       `Object ${id} changed on AuroraCloud after it was read (updated_at is now ${revision}). Read it again with get_object, then retry.`,
       revision,
     )
   }
-  return current.updated_at
+  return { objectUpdatedAt: current.updated_at, properties }
+}
+
+/** The object's revision now, for a conflict that AuroraCloud raised mid-edit; null when it cannot be read. */
+async function currentRevision(id: string, workspaceId: string): Promise<string | null> {
+  try {
+    const current = await getObject(id, workspaceId)
+    return current ? objectRevision(current.updated_at, await listProperties([id], workspaceId)) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Runs an edit's writes in order (#51). AuroraCloud has no batch that would
+ * apply them together, so when one is refused as a conflict the error names
+ * the fields already saved (`saved_fields`) and carries the object's revision
+ * now, like the check before the first write.
+ */
+async function runEditSteps(id: string, workspaceId: string, steps: Array<{ fields: string[]; write: (saved: (field: string) => void) => Promise<void> }>): Promise<string[]> {
+  const saved: string[] = []
+  const markSaved = (field: string) => { if (!saved.includes(field)) saved.push(field) }
+  for (const step of steps) {
+    try {
+      await step.write(markSaved)
+    } catch (error) {
+      if (!(error instanceof ToolConflictError)) throw error
+      const revision = error.currentUpdatedAt ?? await currentRevision(id, workspaceId)
+      const message = saved.length
+        ? `${error.message} These changes were already saved before the conflict: ${saved.join(', ')}.`
+        : error.message
+      throw new ToolConflictError(message, revision, saved)
+    }
+    for (const field of step.fields) markSaved(field)
+  }
+  return saved
+}
+
+/** `dry_run`, when given: absent, null or false writes; true previews; anything else is refused before any read or write. */
+function readDryRun(input: Record<string, unknown>): boolean | ToolErrorResult {
+  const value = input['dry_run']
+  if (value === undefined || value === null || value === false) return false
+  if (value === true) return true
+  return invalidInput('dry_run must be true or false')
+}
+
+/** Formatting and embedded nodes a plain-text replacement would drop, by type, for a dry run. */
+function replacedFormatting(doc: Record<string, unknown> | null): string[] {
+  const found = new Set<string>()
+  const visit = (node: Record<string, unknown>, depth: number) => {
+    const type = typeof node['type'] === 'string' ? node['type'] : null
+    if (type && !(type === 'doc' && depth === 0) && !(type === 'paragraph' && depth === 1) && !(type === 'text' && depth === 2)) found.add(type)
+    if (Array.isArray(node['marks'])) {
+      for (const mark of node['marks'] as Record<string, unknown>[]) if (typeof mark?.['type'] === 'string') found.add(`mark:${mark['type']}`)
+    }
+    if (Array.isArray(node['content'])) for (const child of node['content'] as Record<string, unknown>[]) if (child && typeof child === 'object') visit(child, depth + 1)
+  }
+  if (doc) visit(doc, 0)
+  return [...found].sort()
 }
 
 /** Top-level block texts of a stored document, for a dry-run summary. */
@@ -380,6 +439,8 @@ type ContentReplacementSummary = {
   old_chars: number
   new_chars: number
   first_changed_lines: Array<{ line: number; old: string | null; new: string | null }>
+  /** Node and mark types in the current document that the plain-text replacement drops, even where its text is unchanged. */
+  replaced_formatting: string[]
 }
 
 /** What replacing `current` with `text` would change, without writing it (#51). */
@@ -398,6 +459,7 @@ function contentReplacementSummary(current: Record<string, unknown> | null, text
     old_chars: oldLines.join('\n').length,
     new_chars: text.length,
     first_changed_lines: changed,
+    replaced_formatting: replacedFormatting(current),
   }
 }
 
@@ -1286,25 +1348,42 @@ async function executeToolCallUnsafe(
         const newTitle = 'title' in input ? readString(input['title']) : undefined
         if ('title' in input && !newTitle) return invalidInput('Task title cannot be empty')
         // #51: checked just before the first write; the title write is also guarded by AuroraCloud.
-        const objectUpdatedAt = expectedUpdatedAt === undefined ? undefined : await assertObjectRevision(id, workspaceId, expectedUpdatedAt)
+        const checked = expectedUpdatedAt === undefined ? undefined : await assertObjectRevision(id, workspaceId, expectedUpdatedAt)
 
         // Properties first: updateTaskProps refuses (e.g. encrypted labels)
         // before writing anything, and then the title is left unchanged too.
-        if (Object.keys(patch).length > 0) {
-          await updateTaskProps(id, workspaceId, patch, { existingObject: obj })
-          if (patch.status !== undefined) changedFields.push('status')
-          if (patch.priority !== undefined) changedFields.push('priority')
-          if (patch.due_date !== undefined) changedFields.push('due_date')
-          if (patch.assignees !== undefined) changedFields.push('assignees')
-          if (patch.labels !== undefined) changedFields.push('labels')
-          if (patch.description !== undefined) changedFields.push('description')
-          if (patch.task_list_id !== undefined) changedFields.push('task_list')
+        // Within them the status goes last, so a conflict stops the edit before
+        // the task is marked done. With expected_updated_at each property write
+        // goes only over the row the check read (#51).
+        const fieldOfKey: Record<string, string> = {
+          status: 'status', priority: 'priority', due_date: 'due_date', assignee: 'assignees', assignees: 'assignees',
+          tags: 'labels', labels: 'labels', description: 'description', task_list_id: 'task_list',
         }
-        if (newTitle) {
+        const propertyFields = [
+          ...(patch.priority !== undefined ? ['priority'] : []),
+          ...(patch.due_date !== undefined ? ['due_date'] : []),
+          ...(patch.assignees !== undefined ? ['assignees'] : []),
+          ...(patch.labels !== undefined ? ['labels'] : []),
+          ...(patch.description !== undefined ? ['description'] : []),
+          ...(patch.task_list_id !== undefined ? ['task_list'] : []),
+          ...(patch.status !== undefined ? ['status'] : []),
+        ]
+        const saved = await runEditSteps(id, workspaceId, [
+          ...(Object.keys(patch).length > 0 ? [{
+            fields: propertyFields,
+            write: (markSaved: (field: string) => void) => updateTaskProps(id, workspaceId, patch, {
+              existingObject: obj,
+              ...(checked ? { guardedProperties: checked.properties, onSaved: (key: string) => markSaved(fieldOfKey[key] ?? key) } : {}),
+            }),
+          }] : []),
           // Property writes do not move the object row, so the row checked above still guards the title.
-          await updateObjectTitle(id, newTitle, workspaceId, objectUpdatedAt === undefined ? {} : { expectedObjectUpdatedAt: objectUpdatedAt })
-          changedFields.unshift('title')
-        }
+          ...(newTitle ? [{
+            fields: ['title'],
+            write: () => updateObjectTitle(id, newTitle, workspaceId, checked ? { expectedObjectUpdatedAt: checked.objectUpdatedAt } : {}),
+          }] : []),
+        ])
+        if (saved.includes('title')) changedFields.push('title')
+        for (const field of propertyFields) if (saved.includes(field)) changedFields.push(field)
 
         // Completing a recurring task creates its next occurrence, as the app does.
         if (patch.status) {
@@ -1347,7 +1426,8 @@ async function executeToolCallUnsafe(
         if (!id) return invalidInput('Object ID is required')
         const expectedUpdatedAt = readExpectedUpdatedAt(input)
         if (isErrorResult(expectedUpdatedAt)) return expectedUpdatedAt
-        const dryRun = input['dry_run'] === true
+        const dryRun = readDryRun(input)
+        if (isErrorResult(dryRun)) return dryRun
 
         const obj = await getObject(id, workspaceId)
         if (!obj) return notFound(`Object ${id} not found in this workspace`)
@@ -1366,7 +1446,7 @@ async function executeToolCallUnsafe(
 
         // The row the content write replaces is read before the check, so a later change fails its guard.
         const contentRow = expectedUpdatedAt !== undefined && hasContentUpdate ? await readContentRow(id, workspaceId) : undefined
-        const objectUpdatedAt = expectedUpdatedAt === undefined ? undefined : await assertObjectRevision(id, workspaceId, expectedUpdatedAt)
+        const objectUpdatedAt = expectedUpdatedAt === undefined ? undefined : (await assertObjectRevision(id, workspaceId, expectedUpdatedAt)).objectUpdatedAt
 
         if (dryRun) {
           return {
@@ -1377,15 +1457,18 @@ async function executeToolCallUnsafe(
           }
         }
 
-        const changedFields: string[] = []
-        if (title) {
-          await updateObjectTitle(id, title, workspaceId, objectUpdatedAt === undefined ? {} : { expectedObjectUpdatedAt: objectUpdatedAt })
-          changedFields.push('title')
-        }
-        if (text) {
-          await setContent(id, workspaceId, textToTipTapDoc(text), contentRow === undefined ? {} : { expectedContent: contentRow })
-          changedFields.push('content')
-        }
+        // A body write moves the object row, so the guarded title goes first; a
+        // conflict on the body then says that the title was saved (#51).
+        const changedFields = await runEditSteps(id, workspaceId, [
+          ...(title ? [{
+            fields: ['title'],
+            write: () => updateObjectTitle(id, title, workspaceId, objectUpdatedAt === undefined ? {} : { expectedObjectUpdatedAt: objectUpdatedAt }),
+          }] : []),
+          ...(text ? [{
+            fields: ['content'],
+            write: () => setContent(id, workspaceId, textToTipTapDoc(text), contentRow === undefined ? {} : { expectedContent: contentRow }),
+          }] : []),
+        ])
 
         return changedFields.length
           ? { type: 'object_updated', id, changed_fields: changedFields }
@@ -1397,16 +1480,21 @@ async function executeToolCallUnsafe(
         const text = String(input['text'] ?? '')
         const expectedUpdatedAt = readExpectedUpdatedAt(input)
         if (isErrorResult(expectedUpdatedAt)) return expectedUpdatedAt
+        const dryRun = readDryRun(input)
+        if (isErrorResult(dryRun)) return dryRun
         const contentRow = expectedUpdatedAt !== undefined ? await readContentRow(id, workspaceId) : undefined
         if (expectedUpdatedAt !== undefined) await assertObjectRevision(id, workspaceId, expectedUpdatedAt)
-        if (input['dry_run'] === true) {
+        if (dryRun) {
           const current = await getContentJson(id, workspaceId)
           if (current === null && !await getObject(id, workspaceId)) return notFound(`Object ${id} not found in this workspace`)
           return { type: 'dry_run', id, content: contentReplacementSummary(current, text) }
         }
         // Build a minimal TipTap document from plain text
         const doc = textToTipTapDoc(text)
-        await setContent(id, workspaceId, doc, contentRow === undefined ? {} : { expectedContent: contentRow })
+        await runEditSteps(id, workspaceId, [{
+          fields: ['content'],
+          write: () => setContent(id, workspaceId, doc, contentRow === undefined ? {} : { expectedContent: contentRow }),
+        }])
         return { type: 'content_set', id }
       }
 
@@ -1460,7 +1548,10 @@ async function executeToolCallUnsafe(
         // The row this write replaces is read before the check, so a later change fails its guard.
         const propertyRow = expectedUpdatedAt !== undefined ? await readPropertyRow(objectId, workspaceId, key) : undefined
         if (expectedUpdatedAt !== undefined) await assertObjectRevision(objectId, workspaceId, expectedUpdatedAt)
-        await upsertProperty(objectId, workspaceId, key, valueType, valueStr, propertyRow === undefined ? {} : { expectedRow: propertyRow })
+        await runEditSteps(objectId, workspaceId, [{
+          fields: [key],
+          write: () => upsertProperty(objectId, workspaceId, key, valueType, valueStr, propertyRow === undefined ? {} : { expectedRow: propertyRow }),
+        }])
         return { type: 'property_set', objectId, key, value: valueStr }
       }
 

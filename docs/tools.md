@@ -111,13 +111,22 @@ nothing and returns `{ "type": "error", "code": "conflict", "current_updated_at"
 Read the object again, show the person what changed, then retry with the new
 value. The content, title and property rows a guarded write replaces also
 carry AuroraCloud's `_expected_record` precondition, so a change that lands
-after the check is refused the same way. `update_task` checks its task fields
-(status, priority, due date and so on) before writing; only its title write is
-guarded row by row.
+after the check is refused the same way. That includes each `update_task`
+field (status, priority, due date and so on).
+
+An edit that touches several rows writes them one at a time, because
+AuroraCloud has no batch that applies them together. If a later row is
+refused, the conflict error lists the fields already saved in
+`saved_fields`, and its `current_updated_at` is the revision after those
+writes. `update_task` writes the status last, so a conflict never leaves a
+recurring task marked done without its next occurrence.
 
 `set_content` and `update_object` also accept `dry_run: true`. The result is
 `{ "type": "dry_run", … }` with the old and new title and a content summary
-(block and character counts, first changed lines). Nothing is written.
+(block and character counts, first changed lines, and `replaced_formatting`:
+the headings, marks, embeds and other nodes the plain-text replacement would
+drop, even where the text is the same). Nothing is written. Any `dry_run`
+value other than `true` or `false` is refused as invalid input.
 
 ## Safer workflow recipes
 

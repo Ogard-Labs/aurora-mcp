@@ -13,11 +13,12 @@ All notable changes to this project are documented in this file.
   nothing is written and the call returns a `conflict` error with the
   current `current_updated_at`. The rows the write replaces are also guarded
   on AuroraCloud (`_expected_record`), so a change that lands between the
-  check and the write is refused too. `update_task` checks its property
-  fields before writing, not row by row.
+  check and the write is refused too, for each `update_task` field as well.
+  An edit that writes several rows and is refused partway names the fields
+  already saved in `saved_fields`.
 - `dry_run: true` on `set_content` and `update_object` returns what would
-  change (title, block and character counts, first changed lines) and writes
-  nothing.
+  change (title, block and character counts, first changed lines, and the
+  formatting and embeds a plain-text replacement drops) and writes nothing.
 
 ### Changed
 
