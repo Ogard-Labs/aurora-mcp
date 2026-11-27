@@ -21,6 +21,43 @@ export function collapse(text) {
 const WORD = /[A-Za-z0-9_$]/
 
 /**
+ * `source` with every comment blanked out: each comment character becomes a
+ * space, and line breaks stay, so line structure is kept. Quoted strings and
+ * template literals are read through, so a `//` inside one stays. The drift
+ * check matches against this, so a stale copy of a value in a comment never
+ * stands in for the live code.
+ */
+export function stripComments(source) {
+  let out = ''
+  let index = 0
+  const blank = (text) => text.replace(/[^\r\n\u2028\u2029]/g, ' ')
+  while (index < source.length) {
+    const char = source[index]
+    const next = source[index + 1]
+    if (char === '/' && next === '/') {
+      const end = source.slice(index).search(/[\r\n\u2028\u2029]/)
+      const stop = end === -1 ? source.length : index + end
+      out += blank(source.slice(index, stop))
+      index = stop
+    } else if (char === '/' && next === '*') {
+      const end = source.indexOf('*/', index + 2)
+      const stop = end === -1 ? source.length : end + 2
+      out += blank(source.slice(index, stop))
+      index = stop
+    } else if (char === "'" || char === '"' || char === '`') {
+      let stop = index + 1
+      while (stop < source.length && source[stop] !== char) stop += source[stop] === '\\' ? 2 : 1
+      out += source.slice(index, stop + 1)
+      index = stop + 1
+    } else {
+      out += char
+      index += 1
+    }
+  }
+  return out
+}
+
+/**
  * Whether `needle` appears in `text` as a whole: where it starts or ends with
  * a name or number character, the text beside it must not continue that name
  * or number. So `VERSION = 1` does not match `VERSION = 10`, and `'Done'` stays
@@ -84,7 +121,8 @@ export async function checkDrift(entries, root, read = (file) => readFile(file, 
   for (const entry of entries) {
     const file = path.join(root, entry.file)
     if (!cache.has(file)) {
-      cache.set(file, read(file).then((raw) => ({ raw, text: collapse(raw) }), (error) => ({ missing: error?.code ?? String(error) })))
+      // Comments are blanked first: only live code can match an entry.
+      cache.set(file, read(file).then(stripComments).then((raw) => ({ raw, text: collapse(raw) }), (error) => ({ missing: error?.code ?? String(error) })))
     }
     const loaded = await cache.get(file)
     if ('missing' in loaded) {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { AURORA_CONTRACT, AURORA_ROUTES, auroraRoute, TASK_LIST_PROPERTY_KEYS, TASK_PROPERTY_KEYS } from './auroraContract.js'
 // @ts-expect-error plain JavaScript script without types
-import { checkDrift, collapse, containsWhole, endsLine, formatDrift } from '../scripts/auroraDrift.mjs'
+import { checkDrift, collapse, containsWhole, endsLine, formatDrift, stripComments } from '../scripts/auroraDrift.mjs'
 
 test('every contract entry has a unique id and source text that holds the value the code uses', () => {
   const ids = AURORA_CONTRACT.map((entry) => entry.id)
@@ -199,4 +199,20 @@ test('live code between two block comments is drift, and a no-break space after 
   assert.equal(await check(`${successor.source} /* hash */ + ':v2' /* id version */\n`), 1)
   assert.equal(await check(successor.source.replace('return ', 'return ') + '\n'), 0)
   assert.equal(await check(successor.source.replace('return ', 'return ') + '\n'), 1)
+})
+
+test('a stale copy of a value in a comment is not live code (#49 review)', async () => {
+  const version = AURORA_CONTRACT.find((entry) => entry.id === 'task-status-config-version')
+  assert.ok(version)
+  const stale = `// Old declaration: ${version.source}; version 2 adds a field.\nexport const TASK_STATUS_CONFIG_VERSION = 2\n`
+  assert.equal((await checkDrift([version], '/checkout', async () => stale)).length, 1, 'line comment')
+  const block = `/*\n${version.source};\n*/\nexport const TASK_STATUS_CONFIG_VERSION = 2\n`
+  assert.equal((await checkDrift([version], '/checkout', async () => block)).length, 1, 'block comment')
+  const key = AURORA_CONTRACT.find((entry) => entry.id === 'task-key-status')
+  assert.ok(key)
+  assert.equal((await checkDrift([key], '/checkout', async () => `/** Was: ${key.source} */\nconst STATUS_KEY = 'state'\n`)).length, 1, 'doc comment')
+  // Strings are read through: a `//` or `/*` inside one is not a comment.
+  assert.equal(stripComments("const url = 'https://x' // note\n"), "const url = 'https://x'        \n")
+  assert.equal(stripComments('const a = "/* no */" /* yes */;'), 'const a = "/* no */"          ;')
+  assert.equal(stripComments('const t = `a // b` // c'), 'const t = `a // b`     ')
 })
