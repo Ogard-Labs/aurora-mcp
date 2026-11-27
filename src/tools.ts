@@ -893,10 +893,14 @@ async function executeToolCallUnsafe(
         if (!obj) return notFound(`Object ${id} not found in this workspace`)
 
         // #51: the revision handed out must match what was read. The body and
-        // properties are read after the object row, so the row is read again
-        // afterwards: had it moved meanwhile (a rename, or a body save, which
-        // also moves it), the read starts over. A property saved after its read
-        // only makes the revision older than AuroraCloud's, which a write refuses.
+        // properties are read after the object row, so the row and the
+        // properties are read again afterwards: had either moved meanwhile (a
+        // rename or body save moves the row; a property save, possibly on
+        // another page of a long property list, moves only that property), the
+        // read starts over. The revision then never vouches for a value the
+        // caller was not shown.
+        const propertySnapshot = (rows: readonly AuroraPropertyRecord[]) =>
+          rows.map((row) => `${row.id}@${row.updated_at}`).sort().join('|')
         let content: Awaited<ReturnType<typeof getContent>>
         let rawProps: Awaited<ReturnType<typeof listProperties>>
         for (let attempt = 1; ; attempt++) {
@@ -904,7 +908,8 @@ async function executeToolCallUnsafe(
           rawProps = await listProperties([id], workspaceId)
           const again = await getObject(id, workspaceId)
           if (!again) return notFound(`Object ${id} not found in this workspace`)
-          if (again.updated_at === obj.updated_at) break
+          const propsAgain = again.updated_at === obj.updated_at ? await listProperties([id], workspaceId) : null
+          if (propsAgain && propertySnapshot(propsAgain) === propertySnapshot(rawProps)) break
           obj = again
           if (attempt >= 3) {
             return { type: 'error', code: 'conflict', message: `Object ${id} kept changing on AuroraCloud while it was read. Try again.`, retryable: true }

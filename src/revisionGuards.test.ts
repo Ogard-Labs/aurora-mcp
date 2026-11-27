@@ -25,6 +25,7 @@ type FakeState = {
   extraProperties?: Record<string, unknown>[]
   contentJson?: Record<string, unknown> | string
   contentUpdatedAt?: string
+  stageValue?: string
   title?: string
   /** Called before each read of the object row, counted from 1. */
   beforeObjectRead?: (state: FakeState, read: number) => void
@@ -57,7 +58,7 @@ function handler(state: FakeState) {
       state.beforePropertiesRead?.(state, state.propertyReads)
       res.end(list([{
         id: 'prop-1', object_id: 'obj-1', workspace_id: 'workspace-1', key: 'Stage', value_type: 'text',
-        value_text: 'Draft', value_num: null, value_date: null, value_bool: null, value_ref: null,
+        value_text: state.stageValue ?? 'Draft', value_num: null, value_date: null, value_bool: null, value_ref: null,
         updated_at: state.propertyUpdatedAt,
       }, ...(state.extraProperties ?? [])]))
       return
@@ -466,5 +467,24 @@ test('a body encrypted after the title landed is a conflict that names the saved
     assert.equal(result['code'], 'conflict', JSON.stringify(result))
     assert.deepEqual(result['saved_fields'], ['title'])
     assert.equal(state.writes.length, 1, 'the sealed body is not written over')
+  })
+})
+
+test('get_object reads again when a property moved while the properties were read', async () => {
+  const state: FakeState = {
+    ...freshState(),
+    // A property save lands after the property list was read (on a long list, between its pages).
+    beforePropertiesRead: (current, read) => {
+      if (read !== 2) return
+      current.stageValue = 'Review'
+      current.propertyUpdatedAt = '2026-07-01T12:45:00.000Z'
+    },
+  }
+  await withFake(state, async () => {
+    const result = await executeToolCall('get_object', { id: 'obj-1' }, 'workspace-1') as Record<string, unknown>
+    assert.equal(result['type'], 'object', JSON.stringify(result))
+    assert.equal(result['updated_at'], '2026-07-01T12:45:00.000Z')
+    assert.match(JSON.stringify(result), /Review/, 'the property value read with that revision')
+    assert.doesNotMatch(JSON.stringify(result), /Draft/)
   })
 })
