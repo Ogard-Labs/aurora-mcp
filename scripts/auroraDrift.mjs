@@ -291,9 +291,10 @@ export function findInCode(raw, needle, literal, statement = false) {
     const inCode = (!literal || literal[start] === 0) && literalsExact(raw, start, match[1].length, needle, literal)
     // An entry that is one whole string or template is an operand: the code after it must not go on with
     // the value (`'/route' + '/v2'` is another route).
-    if (inCode && !statement && (!wholeLiteral(needle) || (!joinsOperandBefore(raw.slice(0, start)) && !continuesOperand(raw.slice(match.index + match[0].length))))) return true
+    const operandKept = !wholeLiteral(needle) || (!joinsOperandBefore(raw.slice(0, start)) && !continuesOperand(raw.slice(match.index + match[0].length)))
+    if (inCode && operandKept && !statement) return true
     const tail = /^(?:[ \t]|\/\*(?:[^*\n]|\*(?!\/))*\*\/)*(?:([;}])|(?:\/\/[^\n]*)?(?:\r?\n|$))/.exec(raw.slice(match.index + match[0].length))
-    if (inCode && tail && (tail[1] || !continuesExpression(raw.slice(match.index + match[0].length + tail[0].length)))) return true
+    if (statement && inCode && operandKept && tail && (tail[1] || !continuesExpression(raw.slice(match.index + match[0].length + tail[0].length)))) return true
     // Step one whole code point, so a search never restarts inside a surrogate pair (which the `u` flag would read back to the same match).
     pattern.lastIndex = match.index + String.fromCodePoint(raw.codePointAt(match.index)).length
   }
@@ -338,14 +339,17 @@ function wholeLiteral(needle) {
 
 /** Whether code that ends `before` (comments are already blanked) joins an operator to the operand after it. `=>` does not. */
 function joinsOperandBefore(before) {
-  const code = before.replace(/\s+$/, '')
+  // A TypeScript angle-bracket assertion (`<const>'...'`) does not change the value.
+  const code = before.replace(/\s+$/, '').replace(new RegExp(String.raw`(^|[^\p{ID_Continue}$)\]\s])(\s*)<\s*${NAME}+(?:\s*\.\s*${NAME}+)*\s*>$`, 'u'), '$1$2').replace(/\s+$/, '')
   if (code.endsWith('=>')) return false
   return /[+\-*/%&|^<>?]$/.test(code) || new RegExp(String.raw`(?:^|(?!${NAME})[^])(?:in|instanceof)$`, 'u').test(code)
 }
 
 /** Whether code that starts `rest` (after whitespace and comments) goes on with the operand before it. */
 function continuesOperand(rest) {
-  const code = rest.replace(/^(?:\s|\/\/[^\n]*|\/\*(?:[^*]|\*(?!\/))*\*\/)*/, '')
+  const skip = (text) => text.replace(/^(?:\s|\/\/[^\n]*|\/\*(?:[^*]|\*(?!\/))*\*\/)*/, '')
+  // A TypeScript non-null `!` (not `!=`) does not change the value.
+  const code = skip(skip(rest).replace(/^(?:!(?!=))+/, ''))
   // A `(` or a backtick after a string would call it, which no route does.
   return new RegExp(String.raw`^(?:[+\-*/%.?\[&|=<>^!]|(?:in|instanceof)(?!${NAME}))`, 'u').test(code)
 }

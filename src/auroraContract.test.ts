@@ -407,15 +407,17 @@ test('a route string that is extended is drift (#49 review)', async () => {
   const literalRoutes = AURORA_CONTRACT.filter((entry) => /^['"`]/.test(entry.source) && entry.source.endsWith(entry.source[0]))
   assert.ok(literalRoutes.length > 0)
   for (const route of literalRoutes) {
-    for (const extended of [` + '/v2'`, `\n  + '/v2'`, `.concat('/v2')`, ` /* c */ + suffix`, `[0]`]) {
+    for (const extended of [`! + '/v2'`, ` != other`, `!.concat('x')`, ` + '/v2';`, `\n  + '/v2'`, `.concat('/v2')`, ` /* c */ + suffix`, `[0]`]) {
       const text = `app.get(${route.source}${extended}, handler)\n`
       assert.equal((await checkDrift([route], '/checkout', async () => text)).length, 1, `${route.id}${extended}`)
     }
-    for (const prefix of [`'/v2' + `, `'/v2' +\n  `, `base /* c */ + `, `flag ? `, `x || `]) {
+    for (const prefix of [`const r = '/v2' + `, `x > `, `a <b> `, `'/v2' +\n  `, `base /* c */ + `, `flag ? `, `x || `]) {
       const text = `app.get(${prefix}${route.source}, handler)\n`
       assert.equal((await checkDrift([route], '/checkout', async () => text)).length, 1, `${prefix}${route.id}`)
     }
-    for (const kept of [`app.get(${route.source}, handler)`, `const r = ${route.source};`, `[${route.source}]`, `{ path: ${route.source} }`, `f(${route.source} as const)`, `const r = () => ${route.source}`, `return ${route.source}`]) {
+    // A whole statement after the joined value must not let the match through either.
+    assert.equal((await checkDrift([route], '/checkout', async () => `const r = '/v2' + ${route.source};\n`)).length, 1, route.id)
+    for (const kept of [`app.get(${route.source}, handler)`, `const r = ${route.source};`, `[${route.source}]`, `{ path: ${route.source} }`, `f(${route.source} as const)`, `const r = () => ${route.source}`, `return ${route.source}`, `app.get(<const>${route.source}, handler)`, `app.get(${route.source}!, handler)`, `app.get(<string>${route.source}!!, handler)`]) {
       assert.deepEqual(await checkDrift([route], '/checkout', async () => `${kept}\n`), [], `${route.id}: ${kept}`)
     }
   }
