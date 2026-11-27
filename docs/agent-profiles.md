@@ -14,6 +14,7 @@ Use exactly these tools for a project-resume profile:
 - `wiki_search`
 - `wiki_get_page`
 - `wiki_related`
+- `list_tasks` and `get_task`, when the profile answers task questions (needs `read:tasks`)
 
 Do not enable write tools in the resume profile. In particular, do not add
 object, content, task, scheduling, property, or deletion tools merely because

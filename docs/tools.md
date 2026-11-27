@@ -86,6 +86,8 @@ including object lookup and startup membership verification.
 | `get_obsidian_import_plan` | Read one bounded plan section; after restart, revalidate the authorized vault against private persisted plan metadata without writing. | `read:objects` plus local vault-root authorization |
 | `import_obsidian_vault` | After explicit acceptance, advance one additive batch and never modify the source. Destination writes use stable IDs, but the batch-advancing tool call is non-idempotent. | `read:objects`, `write:objects`, `write:content` plus local vault-root authorization |
 | `get_obsidian_import_status` | Read content-free journal progress, warning codes, and the next action. | `read:objects` plus local vault-root authorization |
+| `list_tasks` | List tasks with status, status group, due date, priority, task list, assignees and labels, filtered by status, group, list, assignee (or `me`), label, due dates, overdue, due-date presence and recurrence. Completed tasks are left out unless asked for. Sorted by due date, update time or priority; pages with `next_cursor`. Searches the 500 most recently updated tasks with a fixed number of requests. | `read:objects`, `read:tasks` |
+| `get_task` | Read one task with every field, names resolved, its description, recurrence rule and next occurrence. | `read:objects`, `read:tasks` |
 | `list_week_plan` | Read the Monday-start planning week and optional unscheduled tasks. | `read:objects`, `read:tasks` |
 | `read_canvas` | Read Canvas cards, edges, references, frames, and warnings. | `read:objects`, `read:content` |
 | `get_project_context` | Load a bounded, citation-ready project resume packet. | `read:objects`; add `read:content`, `read:tasks`, and `search` for all optional sections |

@@ -287,6 +287,12 @@ function mapGrantedWorkspace(value: unknown): GrantedWorkspace {
 }
 
 /** Get the authenticated user's ID from the auth store. */
+/** The user this server's credential acts as, for `assignee: "me"` (#50). */
+export async function getAuthenticatedUserId(): Promise<string | null> {
+  await ensureAuthRecord()
+  return getAuthUserId()
+}
+
 function getAuthUserId(): string | null {
   const client = getAuroraClient()
   const record = client.authStore.record as Record<string, unknown> | null
@@ -1304,7 +1310,7 @@ export async function getTaskProps(objectId: string, workspaceId: string): Promi
   return propsToTaskProps(props, objectId)
 }
 
-function propsToTaskProps(props: AuroraPropertyRecord[], objectId: string): AuroraTaskProps {
+export function propsToTaskProps(props: AuroraPropertyRecord[], objectId: string): AuroraTaskProps {
   const get = (key: string) => props.find((p) => p.object_id === objectId && p.key === key)
 
   return {
@@ -1535,6 +1541,8 @@ export type AuroraPlanningTask = AuroraTaskProps & {
   id: string
   title: string | null
   updated_at: string | null
+  /** The task's recurrence rule (RRULE text), or null when it does not repeat (#50). */
+  recurrence?: string | null
 }
 
 /** Maximum number of tasks listPlanningTasks will fetch + hydrate. */
@@ -1568,6 +1576,7 @@ export async function listPlanningTasks(workspaceId: string): Promise<AuroraPlan
       title: task.title,
       updated_at: task.updated_at,
       ...propsToTaskProps(props, task.id),
+      recurrence: props.find((prop) => prop.key === 'recurrence')?.value_text || null,
     }
   })
 }

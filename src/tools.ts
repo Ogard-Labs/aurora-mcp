@@ -31,6 +31,9 @@ import {
   listWorkspaceRecentKnowledgeServer,
   listWorkspaceRelatedKnowledgeServer,
   listPlanningTasks,
+  PLANNING_TASKS_MAX,
+  propsToTaskProps,
+  getAuthenticatedUserId,
   createPlanningTimeBlock,
   readCanvasContent,
   searchWorkspaceKnowledgeServer,
@@ -52,12 +55,25 @@ import type {
 import { buildWeekPlan, normalizeCanvasContent } from './planningTools.js'
 import {
   isCompletedTaskStatus,
+  isEncryptedMetadataValue,
+  isStatusGroup,
   matchTaskStatus,
   type TaskStatusGroup,
   type TaskStatusSource,
   type WorkspaceTaskStatuses,
 } from './taskStatuses.js'
-import { advanceRecurrenceChain } from './taskRecurrence.js'
+import { advanceRecurrenceChain, nextRecurrenceDue, recurrenceSuccessorId } from './taskRecurrence.js'
+import {
+  decodeTaskCursor,
+  encodeTaskCursor,
+  matchesTaskFilters,
+  sortTaskRows,
+  taskQueryFingerprint,
+  toTaskRow,
+  type TaskFilters,
+  type TaskRow,
+  type TaskSort,
+} from './taskQueries.js'
 import type { McpCanvasReadResult, McpWeekPlan } from './planningTools.js'
 import { getMcpToolCoverageAudit, getMcpWorkflowRecipes } from './toolCatalog.js'
 import type { McpToolCoverageAudit, McpWorkflowRecipe } from './toolCatalog.js'
@@ -177,6 +193,23 @@ export type ToolResult =
   | { type: 'obsidian_import_batch'; result: ObsidianImportBatchResult }
   | { type: 'obsidian_import_status'; status: ObsidianImportStatus }
   | { type: 'week_plan'; plan: McpWeekPlan }
+  | {
+      /** #50: one page of tasks matching the filters. */
+      type: 'tasks'
+      tasks: TaskRow[]
+      next_cursor: string | null
+      /** Matching tasks across all pages. */
+      total: number
+      note?: string
+    }
+  | {
+      type: 'task'
+      task: TaskRow & {
+        description: string | null
+        recurrence: string | null
+        next_occurrence: { id: string; due_date: string } | null
+      }
+    }
   | { type: 'canvas'; canvas: McpCanvasReadResult }
   | { type: 'scheduled_task_block'; id: string; title: string | null; due_date: string; mode: string }
   | { type: 'members'; members: { id: string; name: string | null; email: string; role: string }[] }
@@ -968,6 +1001,117 @@ async function executeToolCallUnsafe(
         }
       }
 
+      case 'list_tasks': {
+        const limit = readBoundedInteger(input, 'limit', { defaultValue: 25, min: 1, max: 100 })
+        if (!limit.ok) return invalidInput(limit.message)
+        const sortRaw = readString(input['sort']) ?? 'due_date'
+        if (sortRaw !== 'due_date' && sortRaw !== 'updated_at' && sortRaw !== 'priority') {
+          return invalidInput('sort must be one of: due_date, updated_at, priority')
+        }
+        const sort: TaskSort = sortRaw
+        const statusGroupRaw = readString(input['status_group'])
+        if (statusGroupRaw !== null && !isStatusGroup(statusGroupRaw)) return invalidInput('status_group must be one of: todo, inProgress, done')
+        for (const key of ['due_before', 'due_after'] as const) {
+          const value = readString(input[key])
+          if (value !== null && !isDateKey(value)) return invalidInput(`${key} must be a valid date formatted YYYY-MM-DD`)
+        }
+        for (const key of ['overdue', 'has_due_date', 'recurring', 'include_completed'] as const) {
+          if (input[key] !== undefined && typeof input[key] !== 'boolean') return invalidInput(`${key} must be true or false`)
+        }
+        const fingerprint = taskQueryFingerprint(input)
+        const cursorRaw = readString(input['cursor'])
+        const offset = cursorRaw === null ? 0 : decodeTaskCursor(cursorRaw, fingerprint)
+        if (offset === null) return invalidInput('cursor is not valid for this query. Start again without a cursor.')
+
+        // A bounded number of requests whatever the page size: one task read, batched properties, statuses, lists, members.
+        const [tasks, statuses, snapshot, members] = await Promise.all([
+          listPlanningTasks(workspaceId),
+          readWorkspaceTaskStatuses(workspaceId),
+          readTaskLists(workspaceId),
+          listMembers(workspaceId),
+        ])
+        const filters: TaskFilters = { includeCompleted: input['include_completed'] === true, today: todayDateKey() }
+        const statusRaw = readString(input['status'])
+        if (statusRaw !== null) filters.statuses = new Set([resolveStatus(statusRaw, statuses)])
+        if (statusGroupRaw !== null) filters.statusGroup = statusGroupRaw as TaskFilters['statusGroup']
+        const listQuery = readString(input['task_list'])
+        if (listQuery !== null) {
+          const match = matchTaskList(listQuery, snapshot.lists)
+          if (!match) return invalidInput(`Could not resolve task list: ${listQuery}`)
+          filters.taskListId = match.id
+        }
+        const assigneeQuery = readString(input['assignee'])
+        if (assigneeQuery !== null) {
+          const id = assigneeQuery.trim().toLowerCase() === 'me' ? await getAuthenticatedUserId() : matchMember(assigneeQuery, members)?.id
+          if (!id) return invalidInput(`Could not resolve assignee: ${assigneeQuery}`)
+          filters.assigneeId = id
+        }
+        const label = readString(input['label'])
+        if (label !== null) filters.label = label
+        const dueBefore = readString(input['due_before'])
+        if (dueBefore !== null) filters.dueBefore = dueBefore
+        const dueAfter = readString(input['due_after'])
+        if (dueAfter !== null) filters.dueAfter = dueAfter
+        if (typeof input['overdue'] === 'boolean') filters.overdue = input['overdue']
+        if (typeof input['has_due_date'] === 'boolean') filters.hasDueDate = input['has_due_date']
+        if (typeof input['recurring'] === 'boolean') filters.recurring = input['recurring']
+
+        const context = { statuses: statuses.judged, lists: snapshot.lists, members }
+        const matching = sortTaskRows(
+          tasks.map((task) => toTaskRow(task, context)).filter((row) => matchesTaskFilters(row, filters, statuses.judged)),
+          sort,
+        )
+        const page = matching.slice(offset, offset + limit.value)
+        const nextOffset = offset + page.length
+        const notes: string[] = []
+        if (tasks.length >= PLANNING_TASKS_MAX) notes.push(`Only the ${PLANNING_TASKS_MAX} most recently updated tasks are searched.`)
+        if (matching.some((row) => row.encrypted_fields?.length)) notes.push('Some values are end-to-end encrypted and are not shown (see encrypted_fields). Filters never match them.')
+        return {
+          type: 'tasks',
+          tasks: page,
+          next_cursor: nextOffset < matching.length ? encodeTaskCursor(nextOffset, fingerprint) : null,
+          total: matching.length,
+          ...(notes.length ? { note: notes.join(' ') } : {}),
+        }
+      }
+
+      case 'get_task': {
+        const id = readString(input['id'])
+        if (!id) return invalidInput('Task ID is required')
+        const [obj, props, statuses, snapshot, members] = await Promise.all([
+          getObject(id, workspaceId),
+          listProperties([id], workspaceId),
+          readWorkspaceTaskStatuses(workspaceId),
+          readTaskLists(workspaceId),
+          listMembers(workspaceId),
+        ])
+        if (!obj) return notFound(`Task ${id} not found in this workspace`)
+        if (obj.type !== 'task') return invalidInput(`${id} is not a task`)
+        const taskProps = propsToTaskProps(props, id)
+        const recurrence = props.find((prop) => prop.key === 'recurrence')?.value_text || null
+        const row = toTaskRow(
+          { id, title: obj.title, updated_at: obj.updated_at, ...taskProps, recurrence },
+          { statuses: statuses.judged, lists: snapshot.lists, members },
+        )
+        const encrypted = [...(row.encrypted_fields ?? [])]
+        const description = taskProps.description && isEncryptedMetadataValue(taskProps.description) ? null : taskProps.description
+        if (description === null && taskProps.description) encrypted.push('description')
+        const readableRule = recurrence && !isEncryptedMetadataValue(recurrence) ? recurrence : null
+        const next = readableRule && !isCompletedTaskStatus(row.status, statuses.judged)
+          ? nextRecurrenceDue(readableRule, row.due_date)
+          : null
+        return {
+          type: 'task',
+          task: {
+            ...row,
+            ...(encrypted.length ? { encrypted_fields: encrypted } : {}),
+            description,
+            recurrence: readableRule,
+            next_occurrence: next ? { id: recurrenceSuccessorId(id, next.date), due_date: next.dueDate } : null,
+          },
+        }
+      }
+
       case 'list_task_statuses': {
         const statuses = await readWorkspaceTaskStatuses(workspaceId)
         const note = TASK_STATUS_SOURCE_NOTES[statuses.source]
@@ -1729,6 +1873,19 @@ function textToTipTapDoc(text: string): Record<string, unknown> {
 
 // ── Format result for MCP text response ──────────────────────────────────────
 
+function formatTaskRow(task: TaskRow): string {
+  const parts = [`- ${task.title ?? '(Untitled)'} (${task.id})`]
+  if (task.status) parts.push(`status ${task.status}`)
+  if (task.due_date) parts.push(`due ${task.due_date}`)
+  if (task.priority) parts.push(`priority ${task.priority}`)
+  if (task.task_list) parts.push(`list ${task.task_list.name ?? task.task_list.id}`)
+  if (task.assignees.length) parts.push(`assigned ${task.assignees.map((a) => a.name ?? a.id).join(', ')}`)
+  if (task.labels.length) parts.push(`labels ${task.labels.join(', ')}`)
+  if (task.recurring) parts.push('repeats')
+  if (task.encrypted_fields?.length) parts.push(`encrypted: ${task.encrypted_fields.join(', ')}`)
+  return parts.join(' · ')
+}
+
 export function formatToolResult(result: ToolResult): string {
   switch (result.type) {
     case 'workspaces':
@@ -1782,6 +1939,21 @@ export function formatToolResult(result: ToolResult): string {
       return `Updated: "${result.title}" (${result.id})`
     case 'deleted':
       return `Deleted: ${result.id} (soft-deleted)`
+    case 'tasks': {
+      if (!result.tasks.length) return result.note ? `No tasks found. ${result.note}` : 'No tasks found.'
+      const lines = result.tasks.map(formatTaskRow)
+      lines.push(`${result.tasks.length} of ${result.total} matching task(s).${result.next_cursor ? ` More: cursor ${result.next_cursor}` : ''}`)
+      if (result.note) lines.push(`Note: ${result.note}`)
+      return lines.join('\n')
+    }
+    case 'task': {
+      const task = result.task
+      const lines = [formatTaskRow(task)]
+      if (task.description) lines.push(`Description: ${task.description}`)
+      if (task.recurrence) lines.push(`Repeats: ${task.recurrence}`)
+      if (task.next_occurrence) lines.push(`Next occurrence: ${task.next_occurrence.due_date} (${task.next_occurrence.id})`)
+      return lines.join('\n')
+    }
     case 'dry_run': {
       const lines = [`Dry run for ${result.id}: nothing was written.`]
       if (result.title) lines.push(`Title: "${result.title.old}" -> "${result.title.new}"`)

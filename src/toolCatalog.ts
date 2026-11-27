@@ -80,6 +80,8 @@ const TOOL_EFFECTS: Readonly<Record<string, McpToolEffect>> = {
   list_workspace_members: 'read',
   list_task_lists: 'read',
   list_task_statuses: 'read',
+  list_tasks: 'read',
+  get_task: 'read',
   list_week_plan: 'read',
   schedule_task_block: 'write',
   read_canvas: 'read',
@@ -169,6 +171,35 @@ const DRY_RUN_SCHEMA = resultSchema('dry_run', {
     additionalProperties: false,
   },
 }, ['id'])
+
+const TASK_ROW_PROPERTIES: Record<string, JsonSchema> = {
+  id: stringSchema,
+  title: nullableStringSchema,
+  status: nullableStringSchema,
+  status_group: { oneOf: [{ type: 'string', enum: ['todo', 'inProgress', 'done'] }, { type: 'null' }] },
+  due_date: nullableStringSchema,
+  priority: nullableStringSchema,
+  task_list: {
+    type: ['object', 'null'],
+    properties: { id: stringSchema, name: nullableStringSchema },
+    required: ['id', 'name'],
+    additionalProperties: false,
+  },
+  assignees: {
+    type: 'array',
+    items: {
+      type: 'object',
+      properties: { id: stringSchema, name: nullableStringSchema },
+      required: ['id', 'name'],
+      additionalProperties: false,
+    },
+  },
+  labels: { type: 'array', items: stringSchema },
+  recurring: { type: 'boolean' },
+  updated_at: nullableStringSchema,
+  encrypted_fields: { type: 'array', items: stringSchema },
+}
+const TASK_ROW_REQUIRED = ['id', 'title', 'status', 'status_group', 'due_date', 'priority', 'task_list', 'assignees', 'labels', 'recurring', 'updated_at']
 
 const EXPECTED_UPDATED_AT_INPUT: JsonSchema = {
   type: 'string',
@@ -732,6 +763,33 @@ const RESULT_SCHEMAS: Readonly<Record<string, JsonObjectSchema[]>> = {
     source: { type: 'string', enum: ['workspace', 'builtin', 'encrypted', 'unsupported'] },
     note: stringSchema,
   }, ['statuses', 'status_definitions', 'source'])],
+  list_tasks: [resultSchema('tasks', {
+    tasks: {
+      type: 'array',
+      items: { type: 'object', properties: TASK_ROW_PROPERTIES, required: TASK_ROW_REQUIRED, additionalProperties: false },
+    },
+    next_cursor: nullableStringSchema,
+    total: { type: 'integer', minimum: 0 },
+    note: stringSchema,
+  }, ['tasks', 'next_cursor', 'total'])],
+  get_task: [resultSchema('task', {
+    task: {
+      type: 'object',
+      properties: {
+        ...TASK_ROW_PROPERTIES,
+        description: nullableStringSchema,
+        recurrence: nullableStringSchema,
+        next_occurrence: {
+          type: ['object', 'null'],
+          properties: { id: stringSchema, due_date: stringSchema },
+          required: ['id', 'due_date'],
+          additionalProperties: false,
+        },
+      },
+      required: [...TASK_ROW_REQUIRED, 'description', 'recurrence', 'next_occurrence'],
+      additionalProperties: false,
+    },
+  }, ['task'])],
   list_week_plan: [resultSchema('week_plan', { plan: WEEK_PLAN_SCHEMA }, ['plan'])],
   schedule_task_block: [resultSchema('scheduled_task_block', {
     id: stringSchema,
@@ -984,6 +1042,40 @@ const TOOL_DEFINITIONS: McpToolDeclaration[] = [
     name: 'list_task_statuses',
     description: "List the workspace's task statuses in board order, each with its group (todo, inProgress or done). A task is complete when its status is in the done group. Falls back to Aurora's built-ins (Backlog, Todo, In Progress, Done) when the workspace's own statuses cannot be read.",
     inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'list_tasks',
+    description: "List tasks with their status, due date, priority, task list, assignees and labels in one call. Completed tasks (a status in the done group) are left out unless include_completed is true or the filter asks for a done status. Searches the 500 most recently updated tasks. End-to-end encrypted values are not shown and are named in encrypted_fields.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', description: 'Only tasks with this status (from list_task_statuses).' },
+        status_group: { type: 'string', enum: ['todo', 'inProgress', 'done'], description: 'Only tasks whose status is in this group.' },
+        task_list: { type: 'string', description: 'Only tasks in this task list (name or id).' },
+        assignee: { type: 'string', description: 'Only tasks assigned to this member (id, name or email), or "me".' },
+        label: { type: 'string', description: 'Only tasks with this label (case-insensitive).' },
+        due_before: { type: 'string', description: 'Only tasks due on or before this date (YYYY-MM-DD).' },
+        due_after: { type: 'string', description: 'Only tasks due on or after this date (YYYY-MM-DD).' },
+        overdue: { type: 'boolean', description: 'true: only incomplete tasks due before today. false: leave those out.' },
+        has_due_date: { type: 'boolean', description: 'true: only tasks with a due date. false: only tasks without one.' },
+        recurring: { type: 'boolean', description: 'true: only repeating tasks. false: only one-off tasks.' },
+        include_completed: { type: 'boolean', description: 'Include completed tasks. Defaults to false.' },
+        sort: { type: 'string', enum: ['due_date', 'updated_at', 'priority'], description: 'due_date (soonest first, default), updated_at (newest first) or priority (Urgent first).' },
+        limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Tasks per page. Defaults to 25, max 100.' },
+        cursor: { type: 'string', description: 'next_cursor from the previous page of the same query.' },
+      },
+    },
+  },
+  {
+    name: 'get_task',
+    description: 'Get one task with all its fields: status and its group, due date, priority, task list, assignees with names, labels, description, recurrence rule and the date of its next occurrence.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The task object ID' },
+      },
+      required: ['id'],
+    },
   },
   {
     name: 'list_week_plan',
@@ -1428,7 +1520,7 @@ export function getMcpToolCoverageAudit(): McpToolCoverageAudit {
         id: 'tasks',
         label: 'Task triage and planning',
         status: 'covered',
-        implementedTools: ['list_task_lists', 'list_task_statuses', 'create_task', 'update_task'],
+        implementedTools: ['list_task_lists', 'list_task_statuses', 'list_tasks', 'get_task', 'create_task', 'update_task'],
         missingTools: [],
       },
       {
