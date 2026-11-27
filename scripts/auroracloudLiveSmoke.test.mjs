@@ -319,7 +319,8 @@ test('a failure the smoke did not write is printed as its status and code only, 
 })
 
 test('the drift workflow runs on demand only and holds no auroradocs credential (#49)', () => {
-  const workflow = readFileSync(new URL('../.github/workflows/drift.yml', import.meta.url), 'utf8')
+  // A Windows checkout can hold CRLF line endings; the workflow means the same either way.
+  const workflow = readFileSync(new URL('../.github/workflows/drift.yml', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
   const on = /^on:\n((?:[ \t]+.*\n)+)/m.exec(workflow)
   assert.ok(on, 'the workflow has an on: block')
   assert.deepEqual(on[1].trim().split('\n').map((line) => line.trim()), ['workflow_dispatch:'])
