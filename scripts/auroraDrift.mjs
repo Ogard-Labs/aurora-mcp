@@ -346,11 +346,12 @@ function wholeLiteral(needle) {
 function operandKeptAt(raw, start, end) {
   let left = skipLeftAssertions(raw.slice(0, start))
   let right = skipRightAssertions(raw.slice(end))
-  while (left.endsWith('(') && right.startsWith(')') && groupsParen(left.slice(0, -1))) {
+  while (right !== null && left.endsWith('(') && right.startsWith(')') && groupsParen(left.slice(0, -1))) {
     left = skipLeftAssertions(left.slice(0, -1))
     right = skipRightAssertions(right.slice(1))
   }
-  return !joinsOperandBefore(left) && !continuesOperand(right)
+  // An assertion whose type cannot be read fails closed: the route may go on past it.
+  return right !== null && !joinsOperandBefore(left) && !continuesOperand(right)
 }
 
 /** Whether a `(` after `before` groups an expression rather than calling something. */
@@ -370,7 +371,7 @@ function skipLeftAssertions(before) {
 
 const skipSpace = (text) => text.replace(/^(?:\s|\/\/[^\n]*|\/\*(?:[^*]|\*(?!\/))*\*\/)*/, '')
 
-/** `rest` without leading whitespace, comments, non-null `!` (not `!=`), and `as T` or `satisfies T` assertions. */
+/** `rest` without leading whitespace, comments, non-null `!` (not `!=`), and `as T` or `satisfies T` assertions, or null when a type cannot be read. */
 function skipRightAssertions(rest) {
   let code = skipSpace(rest)
   for (;;) {
@@ -378,7 +379,7 @@ function skipRightAssertions(rest) {
     const keyword = new RegExp(String.raw`^(?:as|satisfies)(?!${NAME})\s*`, 'u').exec(code)
     if (!keyword) return code
     const after = skipType(code.slice(keyword[0].length))
-    if (after === null) return code
+    if (after === null) return null
     code = skipSpace(after)
   }
 }
@@ -406,7 +407,7 @@ function skipType(text) {
   let code = text
   for (;;) {
     code = code.replace(/^\s*(?:(?:keyof|typeof|readonly|unique)\s+)*/, '')
-    const simple = new RegExp(String.raw`^(?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|-?\d[\d_.]*|${NAME}+(?:\s*\.\s*${NAME}+)*)`, 'u').exec(code)
+    const simple = new RegExp(String.raw`^(?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|\x60(?:[^\x60\\$]|\\.|\$(?!\{)|\$\{[^{}\x60]*\})*\x60|-?\d[\d_.]*|${NAME}+(?:\s*\.\s*${NAME}+)*)`, 'u').exec(code)
     if (simple) code = code.slice(simple[0].length)
     else if (/^[([{]/.test(code)) {
       const close = closeBracket(code)
@@ -419,6 +420,8 @@ function skipType(text) {
       if (close < 0) return null
       code = code.slice(suffix[0].length - 1 + close)
     }
+    // Conditional and function types are not read; fail closed so drift is never hidden.
+    if (new RegExp(String.raw`^\s*(?:(?:extends|is|infer)(?!${NAME})|=>)`, 'u').test(code)) return null
     const union = /^\s*(?:\|(?!\|)|&(?!&))/.exec(code)
     if (!union) return code
     code = code.slice(union[0].length)
