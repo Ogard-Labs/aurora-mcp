@@ -264,3 +264,18 @@ test('a keyword after a number ending in a dot is still a keyword (#49 review)',
   const member = `const half = x1.return / 2 /* ${version.source}; old */\nexport const TASK_STATUS_CONFIG_VERSION = 2\n`
   assert.equal((await checkDrift([version], '/checkout', async () => member)).length, 1)
 })
+
+test('a Unicode name is read as one name (#49 review)', async () => {
+  const version = AURORA_CONTRACT.find((entry) => entry.id === 'task-status-config-version')
+  assert.ok(version)
+  // `café1.return` is member access on a Unicode name, so `/ 2` divides and the comment after it stays a comment.
+  for (const name of ['café1', 'ñ1', '𝑥1']) {
+    const member = `const half = ${name}.return / 2 /* ${version.source}; old */\nexport const TASK_STATUS_CONFIG_VERSION = 2\n`
+    assert.equal((await checkDrift([version], '/checkout', async () => member)).length, 1, name)
+  }
+  // A Unicode letter before or after the value continues the name, so it is not a match.
+  assert.equal(containsWhole('éVERSION = 1', 'VERSION = 1'), false)
+  assert.equal(containsWhole('VERSION = 1ñ', 'VERSION = 1'), false)
+  assert.equal(containsWhole('𝑥VERSION = 1', 'VERSION = 1'), false)
+  assert.equal(containsWhole('VERSION = 1 ', 'VERSION = 1'), true)
+})

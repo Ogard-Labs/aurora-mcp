@@ -18,19 +18,25 @@ export function collapse(text) {
   return text.replace(/\s+/g, ' ').trim()
 }
 
-const WORD = /[A-Za-z0-9_$]/
+// A name character, Unicode names included (`café`, `ñ`), as JavaScript reads them.
+const NAME = String.raw`[\p{ID_Continue}$\u200C\u200D]`
+const WORD = new RegExp(NAME, 'u')
 
-const REGEX_AFTER_WORD = /(?:^|[^A-Za-z0-9_$])(?:return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$/
-const CONTROL_BEFORE_PAREN = /(?:^|[^A-Za-z0-9_$])(?:if|while|for|with)\s*$/
+const NOT_NAME = String.raw`(?:^|(?!${NAME})[^])`
+const REGEX_AFTER_WORD = new RegExp(String.raw`${NOT_NAME}(?:return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$`, 'u')
+const CONTROL_BEFORE_PAREN = new RegExp(String.raw`${NOT_NAME}(?:if|while|for|with)\s*$`, 'u')
+const NUMBER_DOT = new RegExp(String.raw`(?:^|(?!${NAME}|\.)[^])\d[\d_]*\.\s*$`, 'u')
+const ENDS_WITH_NAME = new RegExp(`${NAME}$`, 'u')
 
 /** Whether `text` ends with a keyword `pattern` matches, and not a member name such as `a.with` or `a?.return`. */
 function endsWithKeyword(text, pattern) {
   const match = pattern.exec(text)
   if (!match) return false
-  const start = match.index + (/^[A-Za-z]/.test(match[0]) ? 0 : 1)
+  // The match starts with the keyword, or with the one character before it (which may be two code units).
+  const start = match.index + (/^[A-Za-z]/.test(match[0]) ? 0 : String.fromCodePoint(match[0].codePointAt(0)).length)
   const head = text.slice(0, start)
   // A `.` ends a number like `1.` too; only a `.` after a name or a closing bracket is member access.
-  return !/\.\s*$/.test(head) || /(?:^|[^A-Za-z0-9_$.])\d[\d_]*\.\s*$/.test(head)
+  return !/\.\s*$/.test(head) || NUMBER_DOT.test(head)
 }
 
 /**
@@ -66,7 +72,7 @@ export function stripComments(source) {
   const regexMayStart = () => {
     const before = out.replace(/\s+$/, '')
     if (!before) return true
-    if (/[A-Za-z0-9_$]$/.test(before)) return endsWithKeyword(before, REGEX_AFTER_WORD)
+    if (ENDS_WITH_NAME.test(before)) return endsWithKeyword(before, REGEX_AFTER_WORD)
     if (before.endsWith(')')) return closedControl
     return /[(,=:[!&|?{};+\-*%<>~^]$/.test(before)
   }
@@ -134,8 +140,9 @@ export function stripComments(source) {
 export function containsWhole(text, needle) {
   if (!needle) return false
   for (let at = text.indexOf(needle); at !== -1; at = text.indexOf(needle, at + 1)) {
-    const before = at > 0 ? text[at - 1] : ''
-    const after = text[at + needle.length] ?? ''
+    // Whole code points, so a name character outside the BMP is read as one.
+    const before = at > 0 ? [...text.slice(Math.max(0, at - 2), at)].pop() : ''
+    const after = at + needle.length < text.length ? String.fromCodePoint(text.codePointAt(at + needle.length)) : ''
     if (WORD.test(needle[0]) && WORD.test(before)) continue
     if (WORD.test(needle[needle.length - 1]) && WORD.test(after)) continue
     return true
@@ -163,7 +170,7 @@ export function endsLine(raw, needle) {
   const body = words.map((word, index) => index === 0
     ? escape(word)
     : `${/^(?:return|throw|yield)$/.test(words[index - 1]) ? '[^\\S\\r\\n\\u2028\\u2029]+' : '\\s+'}${escape(word)}`).join('')
-  const pattern = new RegExp(`(?:^|[^A-Za-z0-9_$])${body}`, 'g')
+  const pattern = new RegExp(`${NOT_NAME}${body}`, 'gu')
   for (let match = pattern.exec(raw); match; match = pattern.exec(raw)) {
     const tail = /^(?:[ \t]|\/\*(?:[^*\n]|\*(?!\/))*\*\/)*(?:([;}])|(?:\/\/[^\n]*)?(?:\r?\n|$))/.exec(raw.slice(match.index + match[0].length))
     if (tail && (tail[1] || !continuesExpression(raw.slice(match.index + match[0].length + tail[0].length)))) return true
@@ -179,7 +186,7 @@ export function endsLine(raw, needle) {
  */
 function continuesExpression(rest) {
   const code = rest.replace(/^(?:\s|\/\/[^\n]*|\/\*(?:[^*]|\*(?!\/))*\*\/)*/, '')
-  return /^(?:[+\-*/%.?([`&|=<>^,:]|(?:in|instanceof)(?![A-Za-z0-9_$]))/.test(code)
+  return new RegExp(String.raw`^(?:[+\-*/%.?(\[\x60&|=<>^,:]|(?:in|instanceof)(?!${NAME}))`, 'u').test(code)
 }
 
 /** Checks each entry against the auroradocs checkout at `root`. Returns the drifted entries with a reason. */
