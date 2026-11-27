@@ -394,6 +394,8 @@ function closeBracket(text) {
       for (i += 1; i < text.length && text[i] !== char; i += text[i] === '\\' ? 2 : 1);
     } else if (pairs[char] && (char !== '<' || stack.length === 0 || stack[stack.length - 1] === '>')) {
       stack.push(pairs[char])
+    } else if (char === '>' && text[i - 1] === '=') {
+      // The arrow of a function type inside generics, not a closer.
     } else if (char === stack[stack.length - 1]) {
       stack.pop()
       if (stack.length === 0) return i + 1

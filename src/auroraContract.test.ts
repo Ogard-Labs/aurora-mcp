@@ -416,10 +416,10 @@ test('a route string that is extended is drift (#49 review)', async () => {
       assert.equal((await checkDrift([route], '/checkout', async () => text)).length, 1, `${prefix}${route.id}`)
     }
     // Grouping parentheses keep the value, so an operator outside them still joins it.
-    for (const grouped of [`app.get('/v2' + (<const>${route.source}), handler)`, `app.get((${route.source}!) + '/v2', handler)`, `app.get(((${route.source} as string)) + x, handler)`, `app.get(${route.source} as \`/${'$'}{string}\` + '/v2', handler)`, `app.get(${route.source} as T extends U ? A : B + '/v2', handler)`, `const r = ${route.source} + '/v2';`]) {
+    for (const grouped of [`app.get('/v2' + (<const>${route.source}), handler)`, `app.get((${route.source}!) + '/v2', handler)`, `app.get(((${route.source} as string)) + x, handler)`, `app.get(${route.source} as \`/${'$'}{string}\` + '/v2', handler)`, `app.get(${route.source} as T extends U ? A : B + '/v2', handler)`, `app.get((${route.source} as Handler<() => string>) + '/v2', handler)`, `const r = ${route.source} + '/v2';`]) {
       assert.equal((await checkDrift([route], '/checkout', async () => `${grouped}\n`)).length, 1, grouped)
     }
-    for (const kept of [`app.get((${route.source}), handler)`, `app.get((<const>${route.source}!), handler)`, `app.get(${route.source} as Routes['importCapabilities'], handler)`, `app.get(${route.source} as A | B<C<D>>, handler)`, `app.get(${route.source} as Record<string, number>[keyof T], handler)`, `const r = ${route.source} satisfies 'a' | "b";`, `app.get(${route.source} as \`/api/${'$'}{string}\`, handler)`]) {
+    for (const kept of [`app.get((${route.source}), handler)`, `app.get((<const>${route.source}!), handler)`, `app.get(${route.source} as Routes['importCapabilities'], handler)`, `app.get(${route.source} as A | B<C<D>>, handler)`, `app.get(${route.source} as Record<string, number>[keyof T], handler)`, `const r = ${route.source} satisfies 'a' | "b";`, `app.get(${route.source} as \`/api/${'$'}{string}\`, handler)`, `app.get(${route.source} as Handler<() => string>, handler)`]) {
       assert.deepEqual(await checkDrift([route], '/checkout', async () => `${kept}\n`), [], kept)
     }
     // A whole statement after the joined value must not let the match through either.
