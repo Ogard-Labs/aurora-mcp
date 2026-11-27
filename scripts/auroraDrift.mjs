@@ -132,7 +132,8 @@ export function scanSource(source) {
   // `String.raw`. A tag gets the parts and can return any text, so a tagged
   // route may differ from its template; `String.raw` keeps the text.
   const taggedByOther = () => {
-    const before = out.replace(/\s+$/, '')
+    // A TypeScript non-null `!` after the tag (`versioned!`) leaves it a tag; a `!` after an operator negates.
+    const before = out.replace(/\s+$/, '').replace(/\s*!+$/, '').replace(/\s+$/, '')
     if (RAW_TAG.test(before)) return false
     if (ENDS_WITH_NAME.test(before)) return !endsWithKeyword(before, REGEX_AFTER_WORD)
     if (before.endsWith(')')) return !closedControl

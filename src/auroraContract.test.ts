@@ -349,13 +349,15 @@ test('a route template matches untagged or after String.raw, not after another t
     ...['String.raw', 'String.raw ', '(String.raw)', "String['raw']", 'String["raw"]', 'globalThis.String.raw', '( globalThis.String.raw )', ''].map((tag) => `const path = ${tag}${route.source}`),
     `function path(prefix: string) { return ${route.source} }`,
     `app.get(${route.source}, handler)`,
+    `const path = String.raw!${route.source}`,
+    `const negated = !${route.source}`,
   ]
   for (const text of kept) assert.deepEqual(await checkDrift([route], '/checkout', async () => `${text}\n`), [], text)
   // After a loop or if header's `)`, a template is not tagged.
   const loop = `for (const prefix of ['/mcp'] as const)\n  ${route.source}\n`
   assert.deepEqual(await checkDrift([route], '/checkout', async () => loop), [])
   // Any other tag can rewrite the path, so it is not proof the route is unchanged.
-  for (const tag of ['versioned', 'versioned ', 'api.path', 'tags[0]', 'makeTag()', 'my.String.raw', "String['rawer']"]) {
+  for (const tag of ['versioned', 'versioned ', 'api.path', 'tags[0]', 'makeTag()', 'my.String.raw', "String['rawer']", 'versioned!', 'versioned !', 'tags[0]!', 'makeTag()!']) {
     const text = `const path = ${tag}${route.source}\n`
     assert.equal((await checkDrift([route], '/checkout', async () => text)).length, 1, tag)
   }
