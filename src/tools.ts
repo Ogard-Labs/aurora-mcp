@@ -24,6 +24,7 @@ import {
   restoreObject,
   upsertProperty,
   getTaskProps,
+  taskPatchRefusal,
   updateTaskProps,
   getObjectE2eeStatus,
   getWorkspaceKnowledgeObjectServer,
@@ -378,21 +379,37 @@ async function currentRevision(id: string, workspaceId: string): Promise<string 
  * the fields already saved (`saved_fields`) and carries the object's revision
  * now, like the check before the first write.
  */
-async function runEditSteps(id: string, workspaceId: string, steps: Array<{ fields: string[]; write: (saved: (field: string) => void) => Promise<void> }>): Promise<string[]> {
+type EditProgress = {
+  /** A field all of whose writes landed. */
+  saved: (field: string) => void
+  /** A field some, but not all, of whose writes landed. */
+  partlySaved: (field: string) => void
+}
+
+async function runEditSteps(id: string, workspaceId: string, steps: Array<{ fields: string[]; write: (progress: EditProgress) => Promise<void> }>): Promise<string[]> {
   const saved: string[] = []
-  const markSaved = (field: string) => { if (!saved.includes(field)) saved.push(field) }
+  const partly: string[] = []
+  const progress: EditProgress = {
+    saved: (field) => {
+      if (!saved.includes(field)) saved.push(field)
+      const index = partly.indexOf(field)
+      if (index >= 0) partly.splice(index, 1)
+    },
+    partlySaved: (field) => { if (!saved.includes(field) && !partly.includes(field)) partly.push(field) },
+  }
   for (const step of steps) {
     try {
-      await step.write(markSaved)
+      await step.write(progress)
     } catch (error) {
       if (!(error instanceof ToolConflictError)) throw error
-      const revision = error.currentUpdatedAt ?? await currentRevision(id, workspaceId)
-      const message = saved.length
-        ? `${error.message} These changes were already saved before the conflict: ${saved.join(', ')}.`
-        : error.message
-      throw new ToolConflictError(message, revision, saved)
+      const revision = await currentRevision(id, workspaceId) ?? error.currentUpdatedAt
+      const notes = [
+        ...(saved.length ? [`These changes were already saved before the conflict: ${saved.join(', ')}.`] : []),
+        ...(partly.length ? [`These were only partly saved; read the object again before retrying: ${partly.join(', ')}.`] : []),
+      ]
+      throw new ToolConflictError([error.message, ...notes].join(' '), revision, saved, partly)
     }
-    for (const field of step.fields) markSaved(field)
+    for (const field of step.fields) progress.saved(field)
   }
   return saved
 }
@@ -1350,11 +1367,8 @@ async function executeToolCallUnsafe(
         // #51: checked just before the first write; the title write is also guarded by AuroraCloud.
         const checked = expectedUpdatedAt === undefined ? undefined : await assertObjectRevision(id, workspaceId, expectedUpdatedAt)
 
-        // Properties first: updateTaskProps refuses (e.g. encrypted labels)
-        // before writing anything, and then the title is left unchanged too.
-        // Within them the status goes last, so a conflict stops the edit before
-        // the task is marked done. With expected_updated_at each property write
-        // goes only over the row the check read (#51).
+        // With expected_updated_at each property write goes only over the row
+        // the check read (#51).
         const fieldOfKey: Record<string, string> = {
           status: 'status', priority: 'priority', due_date: 'due_date', assignee: 'assignees', assignees: 'assignees',
           tags: 'labels', labels: 'labels', description: 'description', task_list_id: 'task_list',
@@ -1368,18 +1382,32 @@ async function executeToolCallUnsafe(
           ...(patch.task_list_id !== undefined ? ['task_list'] : []),
           ...(patch.status !== undefined ? ['status'] : []),
         ]
+        // Refused before the title is written, so a refusal changes nothing.
+        if (newTitle && (patch.assignees !== undefined || patch.labels !== undefined)) {
+          const refusal = taskPatchRefusal(patch, checked?.properties ?? await listProperties([id], workspaceId))
+          if (refusal) return invalidInput(refusal)
+        }
+        // The title goes first and the status last, so no conflict can stop
+        // the edit after the task is marked done and before its next occurrence.
+        // Property rows are guarded by their own times, which the title write does not move.
         const saved = await runEditSteps(id, workspaceId, [
-          ...(Object.keys(patch).length > 0 ? [{
-            fields: propertyFields,
-            write: (markSaved: (field: string) => void) => updateTaskProps(id, workspaceId, patch, {
-              existingObject: obj,
-              ...(checked ? { guardedProperties: checked.properties, onSaved: (key: string) => markSaved(fieldOfKey[key] ?? key) } : {}),
-            }),
-          }] : []),
-          // Property writes do not move the object row, so the row checked above still guards the title.
           ...(newTitle ? [{
             fields: ['title'],
             write: () => updateObjectTitle(id, newTitle, workspaceId, checked ? { expectedObjectUpdatedAt: checked.objectUpdatedAt } : {}),
+          }] : []),
+          ...(Object.keys(patch).length > 0 ? [{
+            fields: propertyFields,
+            write: (progress: EditProgress) => updateTaskProps(id, workspaceId, patch, {
+              existingObject: obj,
+              ...(checked ? {
+                guardedProperties: checked.properties,
+                onSaved: (key: string, complete: boolean) => {
+                  const field = fieldOfKey[key] ?? key
+                  if (complete) progress.saved(field)
+                  else progress.partlySaved(field)
+                },
+              } : {}),
+            }),
           }] : []),
         ])
         if (saved.includes('title')) changedFields.push('title')
@@ -1742,6 +1770,9 @@ export function formatToolResult(result: ToolResult): string {
         lines.push(`Content: ${c.old_blocks} -> ${c.new_blocks} blocks, ${c.old_chars} -> ${c.new_chars} characters`)
         for (const change of c.first_changed_lines) {
           lines.push(`  line ${change.line}: ${JSON.stringify(change.old)} -> ${JSON.stringify(change.new)}`)
+        }
+        if (c.replaced_formatting.length) {
+          lines.push(`  Warning: the plain-text replacement drops ${c.replaced_formatting.join(', ')}.`)
         }
       }
       return lines.join('\n')

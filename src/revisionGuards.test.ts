@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { executeToolCall } from './tools.js'
+import { executeToolCall, formatToolResult } from './tools.js'
 import { resetAuroraClientForTests } from './auroraClient.js'
 
 // #51: `expected_updated_at` refuses a write over a changed object, writes carry
@@ -64,6 +64,10 @@ function handler(state: FakeState) {
           res.statusCode = 409
           res.end(JSON.stringify({ message: 'The record changed on AuroraCloud; refresh before retrying this write.' }))
           return
+        }
+        // AuroraCloud moves the object's time on a title or body write.
+        if (url.pathname === '/api/collections/objects/records/obj-1' || url.pathname.startsWith('/api/collections/content/')) {
+          state.objectUpdatedAt = '2026-07-02T08:00:00.000Z'
         }
         res.end(JSON.stringify({ id: 'written' }))
       })
@@ -235,7 +239,7 @@ test('a conflict partway through update_object names what was already saved, wit
     }, 'workspace-1') as Record<string, unknown>
     assert.equal(result['code'], 'conflict')
     assert.deepEqual(result['saved_fields'], ['title'])
-    assert.equal(result['current_updated_at'], PROPERTY_UPDATED_AT)
+    assert.equal(result['current_updated_at'], '2026-07-02T08:00:00.000Z', 'the revision after the saved title, not the one before')
     assert.match(String(result['message']), /already saved before the conflict: title/)
   })
 })
@@ -308,6 +312,43 @@ test('a dry run names the formatting and embeds a plain-text replacement drops, 
     const content = result['content'] as Record<string, unknown>
     assert.deepEqual(content['first_changed_lines'], [])
     assert.deepEqual(content['replaced_formatting'], ['attachment', 'heading', 'mark:bold'])
+    assert.match(formatToolResult(result as never), /Warning: the plain-text replacement drops attachment, heading, mark:bold/)
+    assert.deepEqual(state.writes, [])
+  })
+})
+
+test('update_task writes the title before any task field, so a title conflict changes nothing', async () => {
+  const state = { ...freshState(), objectType: 'task', extraProperties: [PRIORITY_ROW], conflictOnWriteNumber: 1 }
+  await withFake(state, async () => {
+    const result = await executeToolCall('update_task', {
+      id: 'obj-1', title: 'Renamed', priority: 'high', expected_updated_at: PROPERTY_UPDATED_AT,
+    }, 'workspace-1') as Record<string, unknown>
+    assert.equal(result['code'], 'conflict')
+    assert.equal(state.writes.length, 1)
+    assert.equal(state.writes[0]!.path, '/api/collections/objects/records/obj-1')
+    assert.equal('saved_fields' in result, false)
+  })
+})
+
+test('a field stored in two rows is reported as partly saved when its second row conflicts', async () => {
+  const tags = { ...PRIORITY_ROW, id: 'prop-tags', key: 'tags', value_text: 'old' }
+  const legacy = { ...PRIORITY_ROW, id: 'prop-labels', key: 'labels', value_text: '["older"]' }
+  const state = { ...freshState(), objectType: 'task', extraProperties: [tags, legacy], conflictOnWriteNumber: 2 }
+  await withFake(state, async () => {
+    const result = await executeToolCall('update_task', { id: 'obj-1', labels: ['new'], expected_updated_at: PROPERTY_UPDATED_AT }, 'workspace-1') as Record<string, unknown>
+    assert.equal(result['code'], 'conflict', JSON.stringify(result))
+    assert.equal('saved_fields' in result, false, 'labels is not reported as saved')
+    assert.deepEqual(result['partly_saved_fields'], ['labels'])
+    assert.match(String(result['message']), /only partly saved/)
+  })
+})
+
+test('an encrypted field refuses the task edit before its title is written', async () => {
+  const labels = { ...PRIORITY_ROW, id: 'prop-tags', key: 'tags', value_text: '__e2ee__sealed' }
+  const state = { ...freshState(), objectType: 'task', extraProperties: [labels] }
+  await withFake(state, async () => {
+    const result = await executeToolCall('update_task', { id: 'obj-1', title: 'Renamed', labels: ['x'] }, 'workspace-1') as Record<string, unknown>
+    assert.equal(result['code'], 'invalid_input')
     assert.deepEqual(state.writes, [])
   })
 })

@@ -1344,6 +1344,22 @@ export function taskAssignees(assignee: string | null | undefined, legacyAssigne
   return current.length ? current : parseTaskListProperty(legacyAssignees)
 }
 
+/**
+ * Why `patch` cannot be written over these property rows, or null. The MCP can
+ * neither decrypt nor re-encrypt end-to-end encrypted values, so writing over
+ * them would destroy them (and store the new value in plain text).
+ */
+export function taskPatchRefusal(patch: Partial<AuroraTaskProps>, records: readonly AuroraPropertyRecord[]): string | null {
+  const encrypted = (...keys: string[]) => keys.some((key) => isEncryptedMetadataValue(records.find((record) => record.key === key)?.value_text))
+  if (patch.assignees !== undefined && encrypted('assignee', 'assignees')) {
+    return "This task's assignees are end-to-end encrypted, so the MCP server cannot change them. Change them in Aurora."
+  }
+  if (patch.labels !== undefined && encrypted('tags', 'labels')) {
+    return "This task's labels are end-to-end encrypted, so the MCP server cannot change them. Change them in Aurora."
+  }
+  return null
+}
+
 export async function updateTaskProps(
   objectId: string,
   workspaceId: string,
@@ -1356,8 +1372,12 @@ export async function updateTaskProps(
      * AuroraCloud refuses it if that row changed since.
      */
     guardedProperties?: readonly AuroraPropertyRecord[]
-    /** Called with each key once its write landed, so a conflict can say what was saved. */
-    onSaved?: (key: string) => void
+    /**
+     * Called once a row's write landed, so a conflict can say what was saved:
+     * `complete` is false while another row of the same field (the legacy
+     * `labels` or `assignees` row) is still to be written.
+     */
+    onSaved?: (key: string, complete: boolean) => void
   } = {},
 ): Promise<void> {
   const obj = options.existingObject ?? await getObject(objectId, workspaceId)
@@ -1402,13 +1422,8 @@ export async function updateTaskProps(
   // The MCP can neither decrypt nor re-encrypt end-to-end encrypted values, so
   // writing over them would destroy them (and store the new value in plain text).
   // Refuse before anything is written.
-  const encrypted = (...keys: string[]) => keys.some((key) => isEncryptedMetadataValue(recordByKey.get(key)?.value_text))
-  if (patch.assignees !== undefined && encrypted('assignee', 'assignees')) {
-    throw new ToolInputError("This task's assignees are end-to-end encrypted, so the MCP server cannot change them. Change them in Aurora.")
-  }
-  if (patch.labels !== undefined && encrypted('tags', 'labels')) {
-    throw new ToolInputError("This task's labels are end-to-end encrypted, so the MCP server cannot change them. Change them in Aurora.")
-  }
+  const refusal = taskPatchRefusal(patch, existing)
+  if (refusal) throw new ToolInputError(refusal)
   if (patch.assignees !== undefined) {
     const assignees = normalizeTaskList(patch.assignees)
     triples.push({ key: 'assignee', valueType: 'text', value: assignees.length ? assignees.join(',') : null })
@@ -1438,7 +1453,10 @@ export async function updateTaskProps(
     if (record.object_id === objectId && record.key && !seenRowByKey.has(record.key)) seenRowByKey.set(record.key, record)
   }
 
-  for (const { key, valueType, value } of triples) {
+  // The rows of one field: a new value and the legacy row it empties.
+  const fieldOf = (key: string) => key === 'assignees' ? 'assignee' : key === 'labels' ? 'tags' : key
+  for (const [index, { key, valueType, value }] of triples.entries()) {
+    const complete = !triples.slice(index + 1).some((later) => fieldOf(later.key) === fieldOf(key))
     const isClearing = value === null || value === ''
     const valueField =
       valueType === 'number' ? 'value_num' :
@@ -1457,9 +1475,10 @@ export async function updateTaskProps(
       } else if (!isClearing) {
         await guardedWrite(() => client.collection('object_properties').create({ object_id: objectId, key, value_type: valueType, [valueField]: value, _expected_record: null }))
       } else {
+        if (complete) options.onSaved?.(fieldOf(key), true)
         continue
       }
-      options.onSaved?.(key)
+      options.onSaved?.(fieldOf(key), complete)
       continue
     }
     if (existingId) {

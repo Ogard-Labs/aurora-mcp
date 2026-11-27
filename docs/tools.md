@@ -118,15 +118,18 @@ An edit that touches several rows writes them one at a time, because
 AuroraCloud has no batch that applies them together. If a later row is
 refused, the conflict error lists the fields already saved in
 `saved_fields`, and its `current_updated_at` is the revision after those
-writes. `update_task` writes the status last, so a conflict never leaves a
-recurring task marked done without its next occurrence.
+writes. A field stored in two rows (labels or assignees, with their legacy
+row) is listed in `partly_saved_fields` when only its first row landed.
+`update_task` writes the title first and the status last, so a conflict never
+leaves a recurring task marked done without its next occurrence.
 
 `set_content` and `update_object` also accept `dry_run: true`. The result is
 `{ "type": "dry_run", … }` with the old and new title and a content summary
 (block and character counts, first changed lines, and `replaced_formatting`:
 the headings, marks, embeds and other nodes the plain-text replacement would
-drop, even where the text is the same). Nothing is written. Any `dry_run`
-value other than `true` or `false` is refused as invalid input.
+drop, even where the text is the same). Nothing is written. An absent or
+`null` `dry_run` writes; any value other than `true`, `false` or `null` is
+refused as invalid input.
 
 ## Safer workflow recipes
 

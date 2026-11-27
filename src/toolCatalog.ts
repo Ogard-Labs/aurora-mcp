@@ -136,6 +136,7 @@ const SAFE_ERROR_SCHEMA = resultSchema('error', {
   retryable: { type: 'boolean' },
   current_updated_at: stringSchema,
   saved_fields: { type: 'array', items: stringSchema },
+  partly_saved_fields: { type: 'array', items: stringSchema },
 }, ['code', 'message', 'retryable'])
 
 const DRY_RUN_SCHEMA = resultSchema('dry_run', {

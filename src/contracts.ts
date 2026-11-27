@@ -30,6 +30,8 @@ export type ToolErrorResult = {
   current_updated_at?: string
   /** On `conflict` (#51): the fields an edit had already saved before the conflict stopped it. */
   saved_fields?: string[]
+  /** On `conflict` (#51): fields stored in more than one row, some of which were saved. */
+  partly_saved_fields?: string[]
 }
 
 export type GrantedWorkspace = {
