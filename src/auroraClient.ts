@@ -940,14 +940,17 @@ export async function setContent(
     page: 1,
     perPage: 1,
   })
-  if (existing.items.length > 0 && isE2eeEncryptedPayload(existing.items[0]['content_json'])) {
-    throw new ToolInputError('Object content is end-to-end encrypted and cannot be modified by the MCP server')
-  }
   if (options.expectedContent !== undefined) {
-    // #51: only over the row the caller read before its check, or none if it saw none.
+    // #51: only over the row the caller read before its check, or none if it
+    // saw none. A row that changed since (even to encrypted, after an earlier
+    // write of this edit landed) is a conflict, so the caller hears what was saved.
     const expected = options.expectedContent
     const row = existing.items[0]
     if ((row ? String(row.id) : null) !== (expected?.id ?? null)) throw new ToolConflictError(CHANGED_ON_AURORACLOUD)
+    if (row && expected && String(row['updated_at'] ?? '') !== expected.updated_at) throw new ToolConflictError(CHANGED_ON_AURORACLOUD)
+    if (row && isE2eeEncryptedPayload(row['content_json'])) {
+      throw new ToolInputError('Object content is end-to-end encrypted and cannot be modified by the MCP server')
+    }
     if (row && expected) {
       await guardedWrite(() => client.collection('content').update(String(row.id), {
         content_json: contentJson,
@@ -957,6 +960,9 @@ export async function setContent(
       await guardedWrite(() => client.collection('content').create({ object_id: objectId, content_json: contentJson, _expected_record: null }))
     }
     return
+  }
+  if (existing.items.length > 0 && isE2eeEncryptedPayload(existing.items[0]['content_json'])) {
+    throw new ToolInputError('Object content is end-to-end encrypted and cannot be modified by the MCP server')
   }
   if (existing.items.length > 0) {
     await client.collection('content').update(String(existing.items[0].id), { content_json: contentJson })

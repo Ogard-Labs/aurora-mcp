@@ -23,7 +23,8 @@ type FakeState = {
   /** Answer only this write (counted from 1) with the 409. */
   conflictOnWriteNumber?: number
   extraProperties?: Record<string, unknown>[]
-  contentJson?: Record<string, unknown>
+  contentJson?: Record<string, unknown> | string
+  contentUpdatedAt?: string
   title?: string
   /** Called before each read of the object row, counted from 1. */
   beforeObjectRead?: (state: FakeState, read: number) => void
@@ -63,7 +64,7 @@ function handler(state: FakeState) {
     }
     if (req.method === 'GET' && url.pathname === '/api/collections/content/records') {
       res.end(list([{
-        id: 'content-1', object_id: 'obj-1', workspace_id: 'workspace-1', updated_at: CONTENT_UPDATED_AT,
+        id: 'content-1', object_id: 'obj-1', workspace_id: 'workspace-1', updated_at: state.contentUpdatedAt ?? CONTENT_UPDATED_AT,
         content_json: state.contentJson ?? { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Old line' }] }] },
       }]))
       return
@@ -428,5 +429,42 @@ test('clearing a field that has no row is not reported as saved when a later wri
     }, 'workspace-1') as Record<string, unknown>
     assert.equal(result['code'], 'conflict', JSON.stringify(result))
     assert.equal('saved_fields' in result, false)
+  })
+})
+
+test('get_object never returns an old body with a newer revision', async () => {
+  const state: FakeState = {
+    ...freshState(),
+    // A body save lands after the body was read; it moves the object's time, as on AuroraCloud.
+    beforePropertiesRead: (current, read) => {
+      if (read !== 1) return
+      current.contentJson = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Newer body' }] }] }
+      current.objectUpdatedAt = '2026-07-01T13:00:00.000Z'
+    },
+  }
+  await withFake(state, async () => {
+    const result = await executeToolCall('get_object', { id: 'obj-1' }, 'workspace-1') as Record<string, unknown>
+    assert.equal(result['type'], 'object', JSON.stringify(result))
+    assert.equal(result['updated_at'], '2026-07-01T13:00:00.000Z')
+    assert.match(String(result['content']), /Newer body/, 'the body read with that revision')
+  })
+})
+
+test('a body encrypted after the title landed is a conflict that names the saved title', async () => {
+  const state: FakeState = {
+    ...freshState(),
+    afterWrite: (current, write) => {
+      if (write !== 1) return
+      current.contentJson = 'v2:sealed-by-another-device'
+      current.contentUpdatedAt = '2026-07-02T09:00:00.000Z'
+    },
+  }
+  await withFake(state, async () => {
+    const result = await executeToolCall('update_object', {
+      id: 'obj-1', title: 'New title', text: 'New line', expected_updated_at: PROPERTY_UPDATED_AT,
+    }, 'workspace-1') as Record<string, unknown>
+    assert.equal(result['code'], 'conflict', JSON.stringify(result))
+    assert.deepEqual(result['saved_fields'], ['title'])
+    assert.equal(state.writes.length, 1, 'the sealed body is not written over')
   })
 })
