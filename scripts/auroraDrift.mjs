@@ -53,10 +53,14 @@ export function stripComments(source) {
   return scanSource(source).code
 }
 
+// In `literal`: the backtick of a template tagged by a function other than `String.raw`.
+const TAGGED = 2
+
 /**
  * The lexer behind `stripComments`. Returns `code` (the source with comments
  * blanked, the same length as `source`) and `literal`, which marks with 1 each
- * position that is the text inside a string, template or regex literal. Quotes,
+ * position that is the text inside a string, template or regex literal, and
+ * with 2 the backtick of a template tagged by a function other than `String.raw`. Quotes,
  * backticks and `${...}` interpolations are code. A drift match must start in
  * code, so an old declaration quoted in a string or template never stands in
  * for the live one.
@@ -98,6 +102,16 @@ export function scanSource(source) {
     if (ENDS_WITH_NAME.test(before)) return endsWithKeyword(before, OBJECT_AFTER_WORD)
     return /[(,=:[!&|?+\-*%<>~^]$/.test(before)
   }
+  // Whether a template starting here is tagged by a function other than
+  // `String.raw`. A tag gets the parts and can return any text, so a tagged
+  // route may differ from its template; `String.raw` keeps the text.
+  const taggedByOther = () => {
+    const before = out.replace(/\s+$/, '')
+    if (/(?:^|[^.\p{ID_Continue}$])String\s*\.\s*raw$/u.test(before)) return false
+    if (ENDS_WITH_NAME.test(before)) return !endsWithKeyword(before, REGEX_AFTER_WORD)
+    if (before.endsWith(')')) return !closedControl
+    return before.endsWith(']')
+  }
   const regexMayStart = () => {
     const before = out.replace(/\s+$/, '')
     if (!before) return true
@@ -138,6 +152,7 @@ export function scanSource(source) {
       markLiteral(index + 1, stop)
       take(Math.min(stop + 1, source.length))
     } else if (char === '`') {
+      if (taggedByOther()) literal[index] = TAGGED
       take(index + 1)
       readTemplate()
     } else if (char === '{') {
@@ -240,7 +255,7 @@ export function findInCode(raw, needle, literal, statement = false) {
     if (match.index <= last) throw new Error('drift check stopped advancing')
     last = match.index
     const start = match.index + match[0].length - match[1].length
-    const inCode = !literal || !literal[start]
+    const inCode = !literal || literal[start] === 0
     if (inCode && !statement) return true
     const tail = /^(?:[ \t]|\/\*(?:[^*\n]|\*(?!\/))*\*\/)*(?:([;}])|(?:\/\/[^\n]*)?(?:\r?\n|$))/.exec(raw.slice(match.index + match[0].length))
     if (inCode && tail && (tail[1] || !continuesExpression(raw.slice(match.index + match[0].length + tail[0].length)))) return true
