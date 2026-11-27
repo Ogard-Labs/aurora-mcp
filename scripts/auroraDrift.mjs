@@ -39,22 +39,28 @@ export function containsWhole(text, needle) {
 }
 
 /**
- * Whether `needle` appears in `raw` as a whole statement: only an optional `;`
- * and a line comment may follow it on its line, and the next code after it
- * (past blank lines and comments) must not continue the expression, unless a
- * `;` ended it. An entry
- * sets `lineEnd` when its source is a whole statement, so `VERSION = 1` does
- * not match `VERSION = 1.1`, `VERSION = 1 + 1`, or `VERSION = 1` with
- * `+ 1` on the next line. Runs of whitespace in `needle` match any whitespace.
+ * Whether `needle` appears in `raw` as a whole statement. After it, on the same
+ * line, may come only block comments, then a `;`, a `}` or a line end (a line
+ * comment may sit before that line end). A `;` or `}` ends the statement
+ * whatever follows. At a line end, the next code (past blank lines and
+ * comments) must not continue the expression. An entry sets `lineEnd` when its
+ * source is a whole statement, so `VERSION = 1` does not match `VERSION = 1.1`,
+ * `VERSION = 1 + 1`, or `VERSION = 1` with `+ 1` on the next line.
+ *
+ * Runs of whitespace in `needle` match any whitespace, except right after
+ * `return`, `throw` or `yield`, where a line break would end the statement.
  */
 export function endsLine(raw, needle) {
   const words = collapse(needle).split(' ').filter(Boolean)
   if (words.length < 1) return false
-  const body = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+')
-  const pattern = new RegExp(`(?:^|[^A-Za-z0-9_$])${body}[ \\t]*(;)?[ \\t]*(?://[^\\n]*)?(?:\\r?\\n|$)`, 'g')
+  const escape = (word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const body = words.map((word, index) => index === 0
+    ? escape(word)
+    : `${/^(?:return|throw|yield)$/.test(words[index - 1]) ? '[ \\t]+' : '\\s+'}${escape(word)}`).join('')
+  const pattern = new RegExp(`(?:^|[^A-Za-z0-9_$])${body}`, 'g')
   for (let match = pattern.exec(raw); match; match = pattern.exec(raw)) {
-    // A `;` ends the statement whatever follows it.
-    if (match[1] || !continuesExpression(raw.slice(match.index + match[0].length))) return true
+    const tail = /^(?:[ \t]*\/\*[^\n]*?\*\/)*[ \t]*(?:([;}])|(?:\/\/[^\n]*)?(?:\r?\n|$))/.exec(raw.slice(match.index + match[0].length))
+    if (tail && (tail[1] || !continuesExpression(raw.slice(match.index + match[0].length + tail[0].length)))) return true
     pattern.lastIndex = match.index + 1
   }
   return false

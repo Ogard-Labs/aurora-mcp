@@ -35,7 +35,8 @@ function fakeCheckout(change?: (file: string, text: string) => string) {
 }
 
 test('the drift check passes when auroradocs still holds every entry, whatever the line breaks', async () => {
-  const read = fakeCheckout((_file, text) => text.replace(/ /g, '\n  '))
+  // Except right after `return`, where a line break would end the statement.
+  const read = fakeCheckout((_file, text) => text.replace(/(?<!\breturn) /g, '\n  '))
   assert.deepEqual(await checkDrift(AURORA_CONTRACT, '/checkout', read), [])
 })
 
@@ -166,3 +167,18 @@ test('every entry that is one whole statement must end its line, formulas too (#
   const same = async () => `${successor.source}\n}\n`
   assert.deepEqual(await checkDrift([successor], '/checkout', same), [])
 })
+
+test('formatting alone is not drift, and a return split from its value is (#49 review)', async () => {
+  const successor = AURORA_CONTRACT.find((entry) => entry.id === 'recurrence-successor-id')
+  assert.ok(successor)
+  const check = async (text: string) => (await checkDrift([successor], '/checkout', async () => text)).length
+  assert.equal(await check(`${successor.source} }\n`), 0, 'closing brace on the same line')
+  assert.equal(await check(`${successor.source} /* same id */\n`), 0, 'trailing block comment')
+  assert.equal(await check(`${successor.source} /* a */ /* b */ // why\n`), 0, 'several comments')
+  assert.equal(await check(`${successor.source} /* x */ + ':v2'\n`), 1, 'suffix after a block comment')
+  assert.equal(await check(successor.source.replace('return ', 'return\n  ') + '\n'), 1, 'return on its own line returns nothing')
+  const version = 'export const TASK_STATUS_CONFIG_VERSION = 1'
+  assert.equal(endsLine(`${version} /* first */;\n`, version), true)
+  assert.equal(endsLine(`${version}\n  = 2\n`, version), false)
+})
+
