@@ -17,7 +17,8 @@ All notable changes to this project are documented in this file.
   An edit that writes several rows and is refused partway names the fields
   already saved in `saved_fields` (and any only partly saved in
   `partly_saved_fields`). `update_task` writes the title first and the status
-  last.
+  last. `get_object` reads the object again if it changed while being read,
+  so its `updated_at` always matches the title and body it returns.
 - `dry_run: true` on `set_content` and `update_object` returns what would
   change (title, block and character counts, first changed lines, and the
   formatting and embeds a plain-text replacement drops) and writes nothing.

@@ -127,9 +127,9 @@ leaves a recurring task marked done without its next occurrence.
 `{ "type": "dry_run", … }` with the old and new title and a content summary
 (block and character counts, first changed lines, and `replaced_formatting`:
 the headings, marks, embeds and other nodes the plain-text replacement would
-drop, even where the text is the same). Nothing is written. An absent or
-`null` `dry_run` writes; any value other than `true`, `false` or `null` is
-refused as invalid input.
+drop, even where the text is the same). Nothing is written. Leaving
+`dry_run` out, or passing `false`, writes; any value other than `true` or
+`false` is refused as invalid input.
 
 ## Safer workflow recipes
 

@@ -414,10 +414,10 @@ async function runEditSteps(id: string, workspaceId: string, steps: Array<{ fiel
   return saved
 }
 
-/** `dry_run`, when given: absent, null or false writes; true previews; anything else is refused before any read or write. */
+/** `dry_run`, when given: absent or false writes; true previews; anything else (null too, as the schema is boolean) is refused before any read or write. */
 function readDryRun(input: Record<string, unknown>): boolean | ToolErrorResult {
   const value = input['dry_run']
-  if (value === undefined || value === null || value === false) return false
+  if (value === undefined || value === false) return false
   if (value === true) return true
   return invalidInput('dry_run must be true or false')
 }
@@ -889,12 +889,27 @@ async function executeToolCallUnsafe(
 
       case 'get_object': {
         const id = String(input['id'] ?? '')
-        const obj = await getObject(id, workspaceId)
+        let obj = await getObject(id, workspaceId)
         if (!obj) return notFound(`Object ${id} not found in this workspace`)
 
-        const content = await getContent(id, workspaceId)
-
-        const rawProps = await listProperties([id], workspaceId)
+        // #51: the revision handed out must match what was read. The body and
+        // properties are read after the object row, so the row is read again
+        // afterwards: had it moved meanwhile (a rename, or a body save, which
+        // also moves it), the read starts over. A property saved after its read
+        // only makes the revision older than AuroraCloud's, which a write refuses.
+        let content: Awaited<ReturnType<typeof getContent>>
+        let rawProps: Awaited<ReturnType<typeof listProperties>>
+        for (let attempt = 1; ; attempt++) {
+          content = await getContent(id, workspaceId)
+          rawProps = await listProperties([id], workspaceId)
+          const again = await getObject(id, workspaceId)
+          if (!again) return notFound(`Object ${id} not found in this workspace`)
+          if (again.updated_at === obj.updated_at) break
+          obj = again
+          if (attempt >= 3) {
+            return { type: 'error', code: 'conflict', message: `Object ${id} kept changing on AuroraCloud while it was read. Try again.`, retryable: true }
+          }
+        }
         let schema: readonly unknown[] = []
         let computedPropertiesStatus: 'complete' | 'unavailable' = 'complete'
         if (obj.type.startsWith('custom:')) {

@@ -24,6 +24,15 @@ type FakeState = {
   conflictOnWriteNumber?: number
   extraProperties?: Record<string, unknown>[]
   contentJson?: Record<string, unknown>
+  title?: string
+  /** Called before each read of the object row, counted from 1. */
+  beforeObjectRead?: (state: FakeState, read: number) => void
+  /** Called before each read of the property rows, counted from 1. */
+  beforePropertiesRead?: (state: FakeState, read: number) => void
+  /** Called after each write landed, counted from 1. */
+  afterWrite?: (state: FakeState, write: number) => void
+  objectReads?: number
+  propertyReads?: number
   writes: Write[]
 }
 
@@ -34,13 +43,17 @@ function list(items: unknown[]): string {
 function handler(state: FakeState) {
   return (req: IncomingMessage, res: ServerResponse<IncomingMessage>, url: URL) => {
     if (req.method === 'GET' && url.pathname === '/api/collections/objects/records/obj-1') {
+      state.objectReads = (state.objectReads ?? 0) + 1
+      state.beforeObjectRead?.(state, state.objectReads)
       res.end(JSON.stringify({
-        id: 'obj-1', workspace_id: 'workspace-1', type: state.objectType ?? 'page', title: 'Original', icon: null, parent_id: null,
+        id: 'obj-1', workspace_id: 'workspace-1', type: state.objectType ?? 'page', title: state.title ?? 'Original', icon: null, parent_id: null,
         is_deleted: false, is_template: false, created_at: '2026-07-01T10:00:00.000Z', updated_at: state.objectUpdatedAt,
       }))
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/collections/object_properties/records') {
+      state.propertyReads = (state.propertyReads ?? 0) + 1
+      state.beforePropertiesRead?.(state, state.propertyReads)
       res.end(list([{
         id: 'prop-1', object_id: 'obj-1', workspace_id: 'workspace-1', key: 'Stage', value_type: 'text',
         value_text: 'Draft', value_num: null, value_date: null, value_bool: null, value_ref: null,
@@ -69,6 +82,7 @@ function handler(state: FakeState) {
         if (url.pathname === '/api/collections/objects/records/obj-1' || url.pathname.startsWith('/api/collections/content/')) {
           state.objectUpdatedAt = '2026-07-02T08:00:00.000Z'
         }
+        state.afterWrite?.(state, state.writes.length)
         res.end(JSON.stringify({ id: 'written' }))
       })
       return
@@ -285,15 +299,17 @@ test('a conflict partway through update_task names the fields already saved', as
 })
 
 for (const tool of ['set_content', 'update_object'] as const) {
-  test(`${tool} refuses a dry_run that is not true or false, before any write`, async () => {
-    const state = freshState()
-    await withFake(state, async () => {
-      const result = await executeToolCall(tool, { id: 'obj-1', text: 'New line', dry_run: 'true' }, 'workspace-1') as Record<string, unknown>
-      assert.equal(result['code'], 'invalid_input')
-      assert.match(String(result['message']), /dry_run must be true or false/)
-      assert.deepEqual(state.writes, [])
+  for (const dryRun of ['true', null]) {
+    test(`${tool} refuses a dry_run of ${JSON.stringify(dryRun)}, before any write`, async () => {
+      const state = freshState()
+      await withFake(state, async () => {
+        const result = await executeToolCall(tool, { id: 'obj-1', text: 'New line', dry_run: dryRun }, 'workspace-1') as Record<string, unknown>
+        assert.equal(result['code'], 'invalid_input')
+        assert.match(String(result['message']), /dry_run must be true or false/)
+        assert.deepEqual(state.writes, [])
+      })
     })
-  })
+  }
 }
 
 test('a dry run names the formatting and embeds a plain-text replacement drops, even with the same text', async () => {
@@ -350,5 +366,67 @@ test('an encrypted field refuses the task edit before its title is written', asy
     const result = await executeToolCall('update_task', { id: 'obj-1', title: 'Renamed', labels: ['x'] }, 'workspace-1') as Record<string, unknown>
     assert.equal(result['code'], 'invalid_input')
     assert.deepEqual(state.writes, [])
+  })
+})
+
+test('get_object reads again when the object moved while its properties were read', async () => {
+  const state: FakeState = {
+    ...freshState(),
+    // A rename lands after the first object read, then a property save before the property read.
+    beforePropertiesRead: (current, read) => {
+      if (read !== 1) return
+      current.title = 'Renamed'
+      current.objectUpdatedAt = '2026-07-01T12:10:00.000Z'
+      current.propertyUpdatedAt = '2026-07-01T12:40:00.000Z'
+    },
+  }
+  await withFake(state, async () => {
+    const result = await executeToolCall('get_object', { id: 'obj-1' }, 'workspace-1') as Record<string, unknown>
+    assert.equal(result['type'], 'object', JSON.stringify(result))
+    assert.equal((result['object'] as Record<string, unknown>)['title'], 'Renamed', 'the revision is never handed out with the old title')
+    assert.equal(result['updated_at'], '2026-07-01T12:40:00.000Z')
+  })
+})
+
+test('get_object gives up with a retryable conflict when the object keeps changing', async () => {
+  const state: FakeState = {
+    ...freshState(),
+    beforeObjectRead: (current, read) => { current.objectUpdatedAt = `2026-07-01T13:0${read}:00.000Z` },
+  }
+  await withFake(state, async () => {
+    const result = await executeToolCall('get_object', { id: 'obj-1' }, 'workspace-1') as Record<string, unknown>
+    assert.equal(result['code'], 'conflict')
+    assert.equal(result['retryable'], true)
+  })
+})
+
+test('a field encrypted after the check is a conflict that names the saved title', async () => {
+  const tags = { ...PRIORITY_ROW, id: 'prop-tags', key: 'tags', value_text: 'old' }
+  const state: FakeState = {
+    ...freshState(),
+    objectType: 'task',
+    extraProperties: [tags],
+    afterWrite: (current, write) => {
+      if (write === 1) current.extraProperties = [{ ...tags, value_text: '__e2ee__sealed', updated_at: '2026-07-02T09:00:00.000Z' }]
+    },
+  }
+  await withFake(state, async () => {
+    const result = await executeToolCall('update_task', {
+      id: 'obj-1', title: 'Renamed', labels: ['x'], expected_updated_at: PROPERTY_UPDATED_AT,
+    }, 'workspace-1') as Record<string, unknown>
+    assert.equal(result['code'], 'conflict', JSON.stringify(result))
+    assert.deepEqual(result['saved_fields'], ['title'])
+    assert.equal(state.writes.length, 1, 'no property write')
+  })
+})
+
+test('clearing a field that has no row is not reported as saved when a later write conflicts', async () => {
+  const state = { ...freshState(), objectType: 'task', conflictOnWriteNumber: 1 }
+  await withFake(state, async () => {
+    const result = await executeToolCall('update_task', {
+      id: 'obj-1', due_date: null, description: 'Handoff notes', expected_updated_at: PROPERTY_UPDATED_AT,
+    }, 'workspace-1') as Record<string, unknown>
+    assert.equal(result['code'], 'conflict', JSON.stringify(result))
+    assert.equal('saved_fields' in result, false)
   })
 })

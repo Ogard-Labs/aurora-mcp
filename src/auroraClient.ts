@@ -1423,7 +1423,14 @@ export async function updateTaskProps(
   // writing over them would destroy them (and store the new value in plain text).
   // Refuse before anything is written.
   const refusal = taskPatchRefusal(patch, existing)
-  if (refusal) throw new ToolInputError(refusal)
+  if (refusal) {
+    // #51: a field that was writable in the rows the caller checked, but is
+    // encrypted now, changed on AuroraCloud since: a conflict, so the caller
+    // hears which earlier writes (the title) already landed.
+    const checked = options.guardedProperties?.filter((record) => record.object_id === objectId)
+    if (checked && !taskPatchRefusal(patch, checked)) throw new ToolConflictError(CHANGED_ON_AURORACLOUD)
+    throw new ToolInputError(refusal)
+  }
   if (patch.assignees !== undefined) {
     const assignees = normalizeTaskList(patch.assignees)
     triples.push({ key: 'assignee', valueType: 'text', value: assignees.length ? assignees.join(',') : null })
@@ -1475,7 +1482,7 @@ export async function updateTaskProps(
       } else if (!isClearing) {
         await guardedWrite(() => client.collection('object_properties').create({ object_id: objectId, key, value_type: valueType, [valueField]: value, _expected_record: null }))
       } else {
-        if (complete) options.onSaved?.(fieldOf(key), true)
+        // Nothing stored and nothing to store: no write landed, so nothing is reported as saved.
         continue
       }
       options.onSaved?.(fieldOf(key), complete)
