@@ -372,3 +372,29 @@ test('a slash after an object literal divides, and after a block starts a regex 
     assert.equal(stripComments(text), `${block}\n/a\\/*/.test(s)     `, block)
   }
 })
+
+test('whitespace inside a quoted value must match exactly (#49 review)', async () => {
+  const statuses = AURORA_CONTRACT.find((entry) => entry.id === 'builtin-task-status-list')
+  assert.ok(statuses && statuses.source.includes("'In Progress'"))
+  const changed = `${statuses.source.replace("'In Progress'", "'In  Progress'")}\n`
+  assert.equal((await checkDrift([statuses], '/checkout', async () => changed)).length, 1)
+  const tab = `${statuses.source.replace("'In Progress'", "'In\tProgress'")}\n`
+  assert.equal((await checkDrift([statuses], '/checkout', async () => tab)).length, 1)
+  // Whitespace in code may still differ.
+  const reflowed = `${statuses.source.replace(/, /g, ',\n    ')}\n`
+  assert.deepEqual(await checkDrift([statuses], '/checkout', async () => reflowed), [])
+})
+
+test('a slash after a function or class expression body divides (#49 review)', async () => {
+  const version = AURORA_CONTRACT.find((entry) => entry.id === 'task-status-config-version')
+  assert.ok(version)
+  for (const expression of ['function () {}', 'function named(a, b) { return a }', 'async function* () {}', 'class {}', 'class A extends B {}', '(function () {})']) {
+    const stale = `const half = ${expression} / 2 /* ${version.source}; old */\nexport const TASK_STATUS_CONFIG_VERSION = 2\n`
+    assert.equal((await checkDrift([version], '/checkout', async () => stale)).length, 1, expression)
+  }
+  // A function or class declaration is a statement: a `/` after its body starts a regex.
+  for (const declaration of ['function f() {}', 'async function f() {}', 'class A {}', 'class A extends B {}', 'export function f() {}']) {
+    const text = `${declaration}\n/a\\/*/.test(s) // c`
+    assert.equal(stripComments(text), `${declaration}\n/a\\/*/.test(s)     `, declaration)
+  }
+})

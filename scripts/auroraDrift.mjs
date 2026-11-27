@@ -26,6 +26,9 @@ const NOT_NAME = String.raw`(?:^|(?!${NAME})[^])`
 const REGEX_AFTER_WORD = new RegExp(String.raw`${NOT_NAME}(?:return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$`, 'u')
 // Keywords after which a `{` opens an object literal (`else {` and `do {` open blocks).
 const OBJECT_AFTER_WORD = new RegExp(String.raw`${NOT_NAME}(?:return|typeof|instanceof|in|of|new|delete|void|throw|case|yield|await)$`, 'u')
+// The head of a function or class, up to its `(` or `{`.
+const FUNCTION_HEAD = new RegExp(String.raw`${NOT_NAME}(?:async\s+)?function\s*(?:\*\s*)?(?:${NAME}+\s*)?$`, 'u')
+const CLASS_HEAD = new RegExp(String.raw`${NOT_NAME}class(?:\s+(?!extends(?!${NAME}))${NAME}+)?(?:\s+extends\s+[^{};]+?)?$`, 'u')
 const CONTROL_BEFORE_PAREN = new RegExp(String.raw`${NOT_NAME}(?:if|while|for|with)\s*$`, 'u')
 const NUMBER_DOT = new RegExp(String.raw`(?:^|(?!${NAME}|\.)[^])\d[\d_]*\.\s*$`, 'u')
 const ENDS_WITH_NAME = new RegExp(`${NAME}$`, 'u')
@@ -76,6 +79,8 @@ export function scanSource(source) {
   // condition, after which a `/` starts a regex rather than dividing.
   const parens = []
   let closedControl = false
+  // Whether the last `)` closed the parameters of a function expression.
+  let closedFunctionExpression = false
   // One entry per open `{` (not `${`): whether it opens an object literal, an
   // operand, rather than a block. A `/` after the `}` of an object divides.
   const braces = []
@@ -96,11 +101,28 @@ export function scanSource(source) {
     markLiteral(index, stop)
     take(Math.min(stop + 1, source.length))
   }
-  const opensObject = () => {
-    const before = out.replace(/\s+$/, '')
-    if (before.endsWith('=>')) return false
+  // Whether code after `text` is in operand position: after an operator, an
+  // opening bracket, `,`, `:`, `=>` or a keyword such as `return`.
+  const operandPosition = (text) => {
+    const before = text.replace(/\s+$/, '')
     if (ENDS_WITH_NAME.test(before)) return endsWithKeyword(before, OBJECT_AFTER_WORD)
     return /[(,=:[!&|?+\-*%<>~^]$/.test(before)
+  }
+  // Whether `text` ends with the head of a function or class expression (the
+  // keyword in operand position), whose `{...}` body then ends an operand.
+  const expressionHead = (text, head) => {
+    const match = head.exec(text)
+    if (!match) return false
+    const start = match.index + (/^[A-Za-z]/.test(match[0]) ? 0 : String.fromCodePoint(match[0].codePointAt(0)).length)
+    const before = text.slice(0, start)
+    return !/\.\s*$/.test(before) && operandPosition(before)
+  }
+  const opensObject = () => {
+    const before = out.replace(/\s+$/, '')
+    if (before.endsWith(')')) return closedFunctionExpression
+    if (expressionHead(before, CLASS_HEAD)) return true
+    if (before.endsWith('=>')) return false
+    return operandPosition(before)
   }
   // Whether a template starting here is tagged by a function other than
   // `String.raw`. A tag gets the parts and can return any text, so a tagged
@@ -172,10 +194,12 @@ export function scanSource(source) {
       closedObject = braces.pop() ?? false
       take(index + 1)
     } else if (char === '(') {
-      parens.push(endsWithKeyword(out, CONTROL_BEFORE_PAREN))
+      parens.push({ control: endsWithKeyword(out, CONTROL_BEFORE_PAREN), functionExpression: expressionHead(out.replace(/\s+$/, ''), FUNCTION_HEAD) })
       take(index + 1)
     } else if (char === ')') {
-      closedControl = parens.pop() ?? false
+      const closed = parens.pop()
+      closedControl = closed?.control ?? false
+      closedFunctionExpression = closed?.functionExpression ?? false
       take(index + 1)
     } else if (char === '/' && regexMayStart()) {
       let stop = index + 1
@@ -255,7 +279,7 @@ export function findInCode(raw, needle, literal, statement = false) {
     if (match.index <= last) throw new Error('drift check stopped advancing')
     last = match.index
     const start = match.index + match[0].length - match[1].length
-    const inCode = !literal || literal[start] === 0
+    const inCode = (!literal || literal[start] === 0) && literalsExact(raw, start, match[1].length, needle, literal)
     if (inCode && !statement) return true
     const tail = /^(?:[ \t]|\/\*(?:[^*\n]|\*(?!\/))*\*\/)*(?:([;}])|(?:\/\/[^\n]*)?(?:\r?\n|$))/.exec(raw.slice(match.index + match[0].length))
     if (inCode && tail && (tail[1] || !continuesExpression(raw.slice(match.index + match[0].length + tail[0].length)))) return true
@@ -263,6 +287,31 @@ export function findInCode(raw, needle, literal, statement = false) {
     pattern.lastIndex = match.index + String.fromCodePoint(raw.codePointAt(match.index)).length
   }
   return false
+}
+
+/**
+ * Whether the match of `needle` at `start` (of `length`) keeps every
+ * whitespace character inside a literal exactly. Whitespace in code may differ
+ * in kind and amount, but `'In  Progress'` is not `'In Progress'`.
+ */
+function literalsExact(raw, start, length, needle, literal) {
+  if (!literal) return true
+  const space = /\s/
+  let j = 0
+  for (let i = start; i < start + length;) {
+    if (literal[i] === 1 && space.test(raw[i])) {
+      if (needle[j] !== raw[i]) return false
+      i += 1
+      j += 1
+    } else if (space.test(raw[i])) {
+      while (i < start + length && literal[i] !== 1 && space.test(raw[i])) i += 1
+      while (j < needle.length && space.test(needle[j])) j += 1
+    } else {
+      i += 1
+      j += 1
+    }
+  }
+  return true
 }
 
 /**
