@@ -2,10 +2,13 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  EXTENDED_SMOKE_CHECKS,
   LIVE_SMOKE_TOOL_NAMES,
   executeReadOnlyTool,
   runLiveSmoke,
+  smokeFailureSummary,
 } from './auroracloudLiveSmokeCore.js'
+import { AuroraApiError } from '../src/errors.js'
 
 const clientEnv = {
   AURORA_API_URL: 'https://api.example.test',
@@ -237,4 +240,79 @@ test('legacy credentials require AURORA_WORKSPACE_ID before imports or network',
     /AURORA_WORKSPACE_ID is required for legacy credentials/,
   )
   assert.equal(dependencyLoads, 0)
+})
+
+const EXTENDED_RESULTS = {
+  list_task_lists: { type: 'task_lists', task_lists: [] },
+  list_task_statuses: { type: 'task_statuses', statuses: [] },
+  list_objects: { type: 'objects', objects: [] },
+  wiki_search: { type: 'knowledge_sources', sources: [] },
+}
+
+function extendedDependencies(results = EXTENDED_RESULTS) {
+  return successfulDependencies({
+    getToolDefinitions: () => [{ name: 'list_workspaces' }, { name: 'get_project_context' }, ...EXTENDED_SMOKE_CHECKS.map((check) => ({ name: check.tool }))],
+    async executeToolCall(name, input, context) {
+      extended.calls.push({ name, input, context })
+      if (name === 'list_workspaces') return { type: 'workspaces', workspaces: context.workspaces }
+      if (results[name]) return results[name]
+      throw new Error(`Unexpected tool: ${name}`)
+    },
+  })
+}
+let extended = { calls: [] }
+
+test('the extended smoke calls only its fixed read-only tools, on the one granted workspace (#49)', async () => {
+  extended = { calls: [] }
+  const { dependencies } = extendedDependencies()
+  await runLiveSmoke({ env: { ...clientEnv, AURORA_SMOKE_EXTENDED: '1' }, loadDependencies: async () => dependencies, writeOutput() {} })
+  assert.deepEqual(extended.calls.map((call) => call.name), ['list_workspaces', 'list_task_lists', 'list_task_statuses', 'list_objects', 'wiki_search'])
+  for (const call of extended.calls.slice(1)) assert.equal(call.input.workspace_id, 'workspace-1')
+  assert.deepEqual(EXTENDED_SMOKE_CHECKS.map((check) => check.tool).filter((tool) => /create|update|delete|set_|apply|import|schedule/.test(tool)), [])
+})
+
+test('the extended smoke fails, naming the tool, when AuroraCloud answers in another shape (#49)', async () => {
+  extended = { calls: [] }
+  const { dependencies } = extendedDependencies({ ...EXTENDED_RESULTS, list_task_statuses: { type: 'error', message: 'unsupported config' } })
+  await assert.rejects(
+    runLiveSmoke({ env: { ...clientEnv, AURORA_SMOKE_EXTENDED: '1' }, loadDependencies: async () => dependencies, writeOutput() {} }),
+    /list_task_statuses failed: tool error: unsupported config/,
+  )
+})
+
+test('the extended smoke refuses a tool that is not classified read-only (#49)', async () => {
+  extended = { calls: [] }
+  const { dependencies } = extendedDependencies()
+  dependencies.getToolEffect = (name) => name === 'list_objects' ? 'write' : 'read'
+  await assert.rejects(
+    runLiveSmoke({ env: { ...clientEnv, AURORA_SMOKE_EXTENDED: '1' }, loadDependencies: async () => dependencies, writeOutput() {} }),
+    /not authoritatively classified as read-only: list_objects/,
+  )
+  assert.equal(extended.calls.some((call) => call.name === 'list_objects'), false)
+})
+
+test('the extended smoke fails when the workspace status config is newer than this server reads (#49)', async () => {
+  extended = { calls: [] }
+  const { dependencies } = extendedDependencies({ ...EXTENDED_RESULTS, list_task_statuses: { type: 'task_statuses', statuses: ['Todo'], source: 'unsupported' } })
+  await assert.rejects(
+    runLiveSmoke({ env: { ...clientEnv, AURORA_SMOKE_EXTENDED: '1' }, loadDependencies: async () => dependencies, writeOutput() {} }),
+    /list_task_statuses failed: source is unsupported/,
+  )
+})
+
+test('a failure the smoke did not write is printed as its status and code only, never its upstream message (#49)', async () => {
+  const base = successfulDependencies()
+  base.dependencies.authenticate = async () => {
+    throw new AuroraApiError(401, 'invalid_token', 'Token for Private Workspace Title belongs to someone@example.com')
+  }
+  let caught
+  await assert.rejects(
+    runLiveSmoke({ env: clientEnv, loadDependencies: async () => base.dependencies, writeOutput() {} }),
+    (error) => { caught = error; return true },
+  )
+  const line = smokeFailureSummary(caught)
+  assert.equal(line, 'AuroraCloud MCP live smoke failed: AuroraCloud answered HTTP 401 (invalid_token).')
+  assert.doesNotMatch(line, /Private Workspace|example\.com/)
+  assert.equal(smokeFailureSummary(new Error('secret detail')), 'AuroraCloud MCP live smoke failed unexpectedly (Error).')
+  assert.match(smokeFailureSummary(new Error('x')), /^AuroraCloud MCP live smoke failed unexpectedly/)
 })

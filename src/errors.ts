@@ -1,4 +1,5 @@
 import type { ToolErrorCode, ToolErrorResult } from './contracts.js'
+import { EMAIL_VERIFICATION_REQUIRED_CODE, WRITE_REFUSED_CODE } from './auroraContract.js'
 
 export class AuroraApiError extends Error {
   constructor(
@@ -52,10 +53,13 @@ const PUBLIC_ERROR_MESSAGES: Record<Exclude<ToolErrorCode, 'rate_limited' | 'con
   server_error: 'AuroraCloud is temporarily unavailable.',
 }
 
-/** AuroraCloud `code` on a 403 for an account whose owner has not confirmed their email (sessions and MCP credentials alike). */
-export const EMAIL_VERIFICATION_REQUIRED_CODE = 'email_verification_required'
-/** AuroraCloud `code` on a 403 that refuses a write the caller's role may read but not change (auroradocs #1519). */
-export const WRITE_REFUSED_CODE = 'write_refused'
+/**
+ * AuroraCloud `code` values, from the AuroraCloud contract (src/auroraContract.ts, #49):
+ * a 403 for an account whose owner has not confirmed their email (sessions and MCP
+ * credentials alike), and a 403 that refuses a write the caller's role may read but
+ * not change (auroradocs #1519).
+ */
+export { EMAIL_VERIFICATION_REQUIRED_CODE, WRITE_REFUSED_CODE }
 
 const EMAIL_VERIFICATION_REQUIRED_MESSAGE =
   'Confirm your email address to use AuroraCloud: open the link Aurora emailed you, or request a new one from the Aurora sign-in screen. Then retry.'

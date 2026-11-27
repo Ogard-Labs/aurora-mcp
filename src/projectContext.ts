@@ -1,4 +1,5 @@
 import { getAuroraClient } from './auroraClient.js'
+import { auroraRoute } from './auroraContract.js'
 import type {
   ProjectCandidate,
   ProjectActivity,
@@ -295,7 +296,7 @@ export async function getProjectContext(
   query.set('task_limit', String(input.taskLimit))
   query.set('source_limit', String(input.sourceLimit))
   const response = await getAuroraClient().request<unknown>(
-    `/api/mcp/workspaces/${encodeURIComponent(workspaceId)}/projects/context?${query.toString()}`,
+    `${auroraRoute('projectContext', { workspaceId: encodeURIComponent(workspaceId) })}?${query.toString()}`,
     { method: 'GET' },
   )
   return normalizeProjectContextResponse(response, workspaceId, {
@@ -310,7 +311,7 @@ export async function listProjectChanges(
 ): Promise<ProjectChangesResult> {
   const query = new URLSearchParams({ cursor: input.cursor, limit: String(input.limit) })
   const response = await getAuroraClient().request<unknown>(
-    `/api/mcp/workspaces/${encodeURIComponent(workspaceId)}/projects/${encodeURIComponent(input.projectId)}/changes?${query.toString()}`,
+    `${auroraRoute('projectChanges', { workspaceId: encodeURIComponent(workspaceId), projectId: encodeURIComponent(input.projectId) })}?${query.toString()}`,
     { method: 'GET' },
   )
   return normalizeProjectChangesResponse(response, workspaceId, input.projectId, input.limit)

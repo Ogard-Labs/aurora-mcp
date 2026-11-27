@@ -43,7 +43,8 @@ requires `AURORA_API_URL` and `AURORA_API_TOKEN`. Prefer an
 `aur_mcp_...` token remains supported but also requires
 `AURORA_WORKSPACE_ID`. Give either credential only `read:objects`; add optional
 `read:content` only when the project context needs readable briefs or citations.
-Do not grant write or task scopes.
+Do not grant write scopes, and grant `read:tasks` or `search` only for the
+extended smoke below.
 
 The smoke always calls `list_workspaces`. Set `AURORA_SMOKE_PROJECT_ID` only
 when you want one bounded `get_project_context` request. Without it, the smoke
@@ -51,6 +52,34 @@ proves discovery and exits without guessing a project. If a client credential
 has multiple workspace grants, set `AURORA_SMOKE_WORKSPACE_ID` to select the
 grant for that project check. The dispatcher rejects any tool that is not
 authoritatively classified as read-only and never dispatches a write tool.
+
+Set `AURORA_SMOKE_EXTENDED=1` to also call `list_task_lists`,
+`list_task_statuses`, `list_objects` and `wiki_search` once each on the selected
+workspace. These are read-only too. The credential then also needs
+`read:tasks` (for `list_task_lists` and `list_task_statuses`) and `search` (for
+`wiki_search`), besides `read:objects`.
+
+## AuroraCloud contract and drift check
+
+Every AuroraCloud data shape this server relies on (task property keys, hidden
+object types, the task status config, the derived id formulas, error codes and
+the non-collection routes) lives in `src/auroraContract.ts`. Each entry names
+the Ogard-Labs/auroradocs file that defines it and the source text that must
+still be there. The code reads these values from the contract file, not from
+its own copies. When Aurora changes one, change the value, the entry and its
+users together.
+
+`node --import tsx scripts/auroraDrift.mjs --auroradocs <checkout>` checks a
+read-only auroradocs checkout and names each entry that no longer matches. It
+is not part of `pnpm check`, which stays offline. The `AuroraCloud drift`
+workflow runs it weekly and on demand, together with the extended live smoke,
+and opens or updates one "AuroraCloud drift detected" issue when either fails.
+It reads auroradocs with a short-lived token from a GitHub App that has
+read-only Contents access to that repository only (`AURORADOCS_READER_APP_ID`
+variable, `AURORADOCS_READER_PRIVATE_KEY` secret, in the `production-smoke`
+environment). If that token or checkout fails, the issue says so and the live
+smoke still runs. The smoke's settings, `AURORA_SMOKE_WORKSPACE_ID` included,
+are secrets in the same environment, because the workflow logs are public.
 
 Pass credentials through your protected local environment, never a committed
 file or recorded shell command. Do not preserve raw smoke output in the
