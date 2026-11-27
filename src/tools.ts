@@ -1068,9 +1068,9 @@ async function executeToolCallUnsafe(
         if (statusGroupRaw !== null) filters.statusGroup = statusGroupRaw as TaskFilters['statusGroup']
         const listQuery = readString(input['task_list'])
         if (listQuery !== null) {
-          const match = matchTaskList(listQuery, snapshot.lists)
-          // A list whose name is encrypted can still be named by its exact id.
-          const sealedId = match ? null : snapshot.encryptedNameIds.find((id) => id === listQuery.trim()) ?? null
+          // An id outranks any name: a list whose name is encrypted is found by its exact id first.
+          const sealedId = snapshot.encryptedNameIds.find((id) => id === listQuery.trim()) ?? null
+          const match = sealedId ? null : matchTaskList(listQuery, snapshot.lists)
           if (!match && !sealedId) {
             return invalidInput(snapshot.encryptedCount > 0
               ? `Could not resolve task list: ${listQuery}. ${snapshot.encryptedCount} task list(s) have encrypted names; pass such a list by its exact id.`

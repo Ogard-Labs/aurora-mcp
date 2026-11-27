@@ -350,6 +350,9 @@ test('an undone marker or a reopened task is not recurring, and a sealed marker 
   // A live marker with an encrypted status cannot say whether the task is done.
   const hidden = toTaskRow({ ...base, status: ENCRYPTED, recurrence_next: live } as never, context)
   assert.equal(hidden.recurring, null)
+  // Reopened with a sealed marker: the readable open status already says it does not repeat.
+  const reopenedSealed = toTaskRow({ ...base, status: 'Todo', recurrence_next: ENCRYPTED } as never, context)
+  assert.equal(reopenedSealed.recurring, false)
   const filters = { includeCompleted: true, today: '2026-07-01' }
   assert.equal(matchesTaskFilters(sealed, { ...filters, recurring: false }, statuses), false)
   assert.equal(matchesTaskFilters(sealed, { ...filters, recurring: true }, statuses), false)
@@ -363,6 +366,12 @@ test('a list whose name is encrypted can be filtered by its exact id, never by a
   try {
     await withFake(async () => {
       assert.deepEqual(ids(await listTasks({ task_list: 'list-sealed' })), ['task-in-sealed'])
+      // A readable list whose name merely contains the id does not outrank it.
+      TASK_LIST_OBJECTS.push({ id: 'list-obj-decoy', workspace_id: 'workspace-1', type: 'task_list', title: 'Old list-sealed notes', icon: null, parent_id: null, is_deleted: false, is_template: false, created_at: '2026-07-01T09:04:00.000Z', updated_at: '2026-07-01T09:04:00.000Z' })
+      LIST_ID_PROPS.push({ id: 'lp-5', object_id: 'list-obj-decoy', workspace_id: 'workspace-1', key: 'list_id', value_type: 'text', value_text: 'list-decoy', value_num: null, value_date: null, value_bool: null, value_ref: null })
+      assert.deepEqual(ids(await listTasks({ task_list: 'list-sealed' })), ['task-in-sealed'])
+      TASK_LIST_OBJECTS.pop()
+      LIST_ID_PROPS.pop()
       // The same for an unconverted list in the legacy table, and its name stays hidden.
       LEGACY_LISTS.push({ id: 'list-old', name: ENCRYPTED, default_status: null })
       TASKS.push({ id: 'task-in-old', title: 'Old list task', updated_at: '2026-07-01T10:00:00.000Z', props: { status: 'Todo', task_list_id: 'list-old' } })

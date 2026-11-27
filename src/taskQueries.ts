@@ -119,8 +119,10 @@ function recurringOf(
 ): boolean | null {
   if (rule) return true
   if (marker.state === 'none') return false
-  if (marker.state === 'encrypted' || statusEncrypted) return null
-  return isCompletedTaskStatus(status, statuses)
+  if (statusEncrypted) return null
+  // A readable open status settles it, whatever the marker holds.
+  if (!isCompletedTaskStatus(status, statuses)) return false
+  return marker.state === 'encrypted' ? null : true
 }
 
 /** One task as a row, with names resolved and encrypted values withheld. */
