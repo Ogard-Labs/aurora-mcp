@@ -4,6 +4,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net'
 import { executeToolCall } from './tools.js'
 import { getAuroraClient, resetAuroraClientForTests } from './auroraClient.js'
+import { matchesTaskFilters, type TaskRow } from './taskQueries.js'
+import { withTaskStatusAliases, type TaskStatusDefinition } from './taskStatuses.js'
 
 // #50: list_tasks and get_task read tasks with their fields in a bounded number of requests.
 
@@ -220,4 +222,28 @@ test('get_task refuses an object that is not a task', async () => {
     const result = await executeToolCall('get_task', { id: 'missing' }, 'workspace-1') as unknown as Record<string, unknown>
     assert.equal(result['code'], 'not_found')
   })
+})
+
+const ROW: TaskRow = {
+  id: 'task-x', title: 'X', status: 'Todo', status_group: 'todo', due_date: null, priority: null,
+  task_list: null, assignees: [], labels: [], recurring: false, updated_at: null,
+}
+
+test('a status filter finds tasks that still store a renamed status under its old name', () => {
+  const statuses: TaskStatusDefinition[] = withTaskStatusAliases(
+    [{ id: 'Todo', group: 'todo' }, { id: 'Shipped', group: 'done' }],
+    { Done: 'Shipped' },
+  )
+  const row = { ...ROW, status: 'Done', status_group: 'done' as const }
+  const filters = { statuses: new Set(['Shipped']), includeCompleted: false, today: '2026-07-10' }
+  assert.equal(matchesTaskFilters(row, filters, statuses), true)
+})
+
+test('an encrypted due date matches no due-date filter, not even has_due_date false or overdue false', () => {
+  const row = { ...ROW, encrypted_fields: ['due_date'] }
+  const base = { includeCompleted: false, today: '2026-07-10' }
+  for (const extra of [{ hasDueDate: false }, { hasDueDate: true }, { overdue: false }, { overdue: true }, { dueBefore: '2099-01-01' }, { dueAfter: '2000-01-01' }]) {
+    assert.equal(matchesTaskFilters(row, { ...base, ...extra }, []), false, JSON.stringify(extra))
+  }
+  assert.equal(matchesTaskFilters(row, base, []), true, 'without a due-date filter the task is still listed')
 })

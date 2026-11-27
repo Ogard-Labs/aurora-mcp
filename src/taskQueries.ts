@@ -15,7 +15,7 @@ import type { AuroraPlanningTask, AuroraTaskList, AuroraWorkspaceMember } from '
 import {
   isCompletedTaskStatus,
   isEncryptedMetadataValue,
-  matchTaskStatus,
+  canonicalTaskStatus,
   taskStatusGroup,
   type TaskStatusDefinition,
   type TaskStatusGroup,
@@ -122,7 +122,7 @@ export function matchesTaskFilters(row: TaskRow, filters: TaskFilters, statuses:
     || [...(filters.statuses ?? [])].some((status) => isCompletedTaskStatus(status, statuses))
   if (completed && !filters.includeCompleted && !asksForDone) return false
   if (filters.statuses) {
-    const status = row.status ? matchTaskStatus(row.status, statuses) ?? row.status : null
+    const status = row.status ? canonicalTaskStatus(row.status, statuses) ?? row.status : null
     if (!status || !filters.statuses.has(status)) return false
   }
   if (filters.statusGroup && row.status_group !== filters.statusGroup) return false
@@ -132,6 +132,10 @@ export function matchesTaskFilters(row: TaskRow, filters: TaskFilters, statuses:
     const wanted = filters.label.trim().toLowerCase()
     if (!row.labels.some((label) => label.trim().toLowerCase() === wanted)) return false
   }
+  // A due date this server cannot read is unknown, not absent: no due-date filter matches it.
+  const dueFiltered = filters.hasDueDate !== undefined || filters.dueBefore !== undefined
+    || filters.dueAfter !== undefined || filters.overdue !== undefined
+  if (dueFiltered && row.encrypted_fields?.includes('due_date')) return false
   const due = dueDateKey(row.due_date)
   if (filters.hasDueDate !== undefined && (due !== null) !== filters.hasDueDate) return false
   if (filters.dueBefore !== undefined && (due === null || due > filters.dueBefore)) return false

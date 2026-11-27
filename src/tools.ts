@@ -59,6 +59,7 @@ import {
   isEncryptedMetadataValue,
   isStatusGroup,
   matchTaskStatus,
+  canonicalTaskStatus,
   type TaskStatusGroup,
   type TaskStatusSource,
   type WorkspaceTaskStatuses,
@@ -1872,7 +1873,7 @@ const TASK_STATUS_SOURCE_NOTES: Record<TaskStatusSource, string | null> = {
 }
 
 function resolveStatus(raw: string, statuses: WorkspaceTaskStatuses): string {
-  const match = matchTaskStatus(raw, statuses.statuses)
+  const match = matchTaskStatus(raw, statuses.statuses) ?? canonicalTaskStatus(raw, statuses.judged)
   if (match) return match
   // Statuses this server cannot read (encrypted or newer format) may still exist: pass the value through.
   if (statuses.source === 'encrypted' || statuses.source === 'unsupported') return raw
