@@ -48,7 +48,8 @@ export function containsWhole(text, needle) {
  * `VERSION = 1 + 1`, or `VERSION = 1` with `+ 1` on the next line.
  *
  * Runs of whitespace in `needle` match any whitespace, except right after
- * `return`, `throw` or `yield`, where a line break would end the statement.
+ * `return`, `throw` or `yield`, where only same-line whitespace (a no-break
+ * space too) may sit, since a line break would end the statement.
  */
 export function endsLine(raw, needle) {
   const words = collapse(needle).split(' ').filter(Boolean)
@@ -56,7 +57,7 @@ export function endsLine(raw, needle) {
   const escape = (word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const body = words.map((word, index) => index === 0
     ? escape(word)
-    : `${/^(?:return|throw|yield)$/.test(words[index - 1]) ? '[ \\t]+' : '\\s+'}${escape(word)}`).join('')
+    : `${/^(?:return|throw|yield)$/.test(words[index - 1]) ? '[^\\S\\r\\n\\u2028\\u2029]+' : '\\s+'}${escape(word)}`).join('')
   const pattern = new RegExp(`(?:^|[^A-Za-z0-9_$])${body}`, 'g')
   for (let match = pattern.exec(raw); match; match = pattern.exec(raw)) {
     const tail = /^(?:[ \t]|\/\*(?:[^*\n]|\*(?!\/))*\*\/)*(?:([;}])|(?:\/\/[^\n]*)?(?:\r?\n|$))/.exec(raw.slice(match.index + match[0].length))

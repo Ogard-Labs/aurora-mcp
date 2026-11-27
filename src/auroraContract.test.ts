@@ -191,3 +191,12 @@ test('the statement end check stays fast on long runs of comment markers (#49 re
   assert.equal(endsLine(`${needle} /* a */ /* b */\n`, needle), true)
   assert.equal(endsLine(`${needle} /* a */ + 1\n`, needle), false)
 })
+
+test('live code between two block comments is drift, and a no-break space after return is not (#49 review)', async () => {
+  const successor = AURORA_CONTRACT.find((entry) => entry.id === 'recurrence-successor-id')
+  assert.ok(successor)
+  const check = async (text: string) => (await checkDrift([successor], '/checkout', async () => text)).length
+  assert.equal(await check(`${successor.source} /* hash */ + ':v2' /* id version */\n`), 1)
+  assert.equal(await check(successor.source.replace('return ', 'return ') + '\n'), 0)
+  assert.equal(await check(successor.source.replace('return ', 'return ') + '\n'), 1)
+})
