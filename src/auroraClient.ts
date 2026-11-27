@@ -1181,6 +1181,8 @@ export type TaskListsSnapshot = {
   lists: AuroraTaskList[]
   /** Lists whose name or id is end-to-end encrypted and cannot be read by this server. */
   encryptedCount: number
+  /** Ids of live lists whose id is readable but whose name is encrypted: usable as an exact filter only. */
+  encryptedNameIds: string[]
 }
 
 const TASK_LIST_OBJECT_TYPE = 'task_list'
@@ -1209,6 +1211,7 @@ export async function readTaskLists(workspaceId: string): Promise<TaskListsSnaps
   }
 
   let encryptedCount = 0
+  const encryptedNameIds: string[] = []
   const knownListIds = new Set<string>()
   const live: Array<{ list: AuroraTaskList; position: number; createdAt: string }> = []
   for (const object of objects) {
@@ -1217,7 +1220,10 @@ export async function readTaskLists(workspaceId: string): Promise<TaskListsSnaps
     const listId = listIdProp?.value_text ?? null
     if (isEncryptedMetadataValue(listId) || isEncryptedMetadataValue(object.title)) {
       if (!object.is_deleted) encryptedCount += 1
-      if (listId && !isEncryptedMetadataValue(listId)) knownListIds.add(listId)
+      if (listId && !isEncryptedMetadataValue(listId)) {
+        knownListIds.add(listId)
+        if (!object.is_deleted) encryptedNameIds.push(listId)
+      }
       continue
     }
     // An object whose list id has not arrived yet cannot be matched to its tasks.
@@ -1248,7 +1254,7 @@ export async function readTaskLists(workspaceId: string): Promise<TaskListsSnaps
     }
     lists.push(legacy)
   }
-  return { lists, encryptedCount }
+  return { lists, encryptedCount, encryptedNameIds }
 }
 
 async function readLegacyTaskLists(workspaceId: string): Promise<AuroraTaskList[]> {
@@ -1553,6 +1559,8 @@ export type AuroraPlanningTask = AuroraTaskProps & {
   updated_at: string | null
   /** The task's recurrence rule (RRULE text), or null when it does not repeat (#50). */
   recurrence?: string | null
+  /** The raw `recurrence_next` marker a completion leaves on the task, or null (#50). */
+  recurrence_next?: string | null
 }
 
 /** Maximum number of tasks listPlanningTasks will fetch + hydrate. */
@@ -1587,6 +1595,7 @@ export async function listPlanningTasks(workspaceId: string): Promise<AuroraPlan
       updated_at: task.updated_at,
       ...propsToTaskProps(props, task.id),
       recurrence: props.find((prop) => prop.key === 'recurrence')?.value_text || null,
+      recurrence_next: props.find((prop) => prop.key === 'recurrence_next')?.value_text || null,
     }
   })
 }

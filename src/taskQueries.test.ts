@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net'
 import { executeToolCall } from './tools.js'
 import { getAuroraClient, resetAuroraClientForTests } from './auroraClient.js'
-import { matchesTaskFilters, type TaskRow } from './taskQueries.js'
+import { matchesTaskFilters, toTaskRow, type TaskRow } from './taskQueries.js'
 import { withTaskStatusAliases, type TaskStatusDefinition } from './taskStatuses.js'
 
 // #50: list_tasks and get_task read tasks with their fields in a bounded number of requests.
@@ -56,15 +56,17 @@ const LIST_ID_PROPS = [
   { id: 'lp-2', object_id: 'list-obj-home', workspace_id: 'workspace-1', key: 'list_id', value_type: 'text', value_text: 'list-home', value_num: null, value_date: null, value_bool: null, value_ref: null },
 ]
 
+const MEMBERS = [
+  { userId: 'user-1', name: 'Ada Lovelace', email: 'ada@example.com', role: 'owner' },
+  { userId: 'user-2', name: 'Grace Hopper', email: 'grace@example.com', role: 'editor' },
+]
+
 function handler(requests: string[]) {
   return (req: IncomingMessage, res: ServerResponse<IncomingMessage>, url: URL) => {
     requests.push(`${req.method} ${url.pathname}`)
     const filter = url.searchParams.get('filter') ?? ''
     if (url.pathname.endsWith('/workspaces/workspace-1/members')) {
-      res.end(JSON.stringify({ members: [
-        { userId: 'user-1', name: 'Ada Lovelace', email: 'ada@example.com', role: 'owner' },
-        { userId: 'user-2', name: 'Grace Hopper', email: 'grace@example.com', role: 'editor' },
-      ] }))
+      res.end(JSON.stringify({ members: MEMBERS }))
       return
     }
     if (url.pathname.endsWith('/auth/me')) {
@@ -294,6 +296,12 @@ test('get_task on a completed repeating task names the occurrence its completion
     await withFake(async () => {
       const result = await executeToolCall('get_task', { id: 'task-chain-done' }, 'workspace-1') as unknown as { task: Record<string, unknown> }
       assert.deepEqual(result.task['next_occurrence'], { id: 'task-chain-next', due_date: '2026-10-12' })
+      // Completion moved the rule into the marker: the task is still part of a series.
+      assert.equal(result.task['recurring'], true)
+      assert.equal(result.task['recurrence'], 'FREQ=DAILY')
+      const repeating = ids(await listTasks({ recurring: true, include_completed: true }))
+      assert.ok(repeating.includes('task-chain-done'), JSON.stringify(repeating))
+      assert.equal(ids(await listTasks({ recurring: false, include_completed: true })).includes('task-chain-done'), false)
     })
   } finally {
     TASKS.splice(TASKS.length - added.length, added.length)
@@ -318,5 +326,59 @@ test('get_task gives no forecast when the due date or status it depends on is en
   } finally {
     TASKS.splice(TASKS.length - added.length, added.length)
     sealedDueDates.clear()
+  }
+})
+
+test('an undone marker does not make a task recurring, and a sealed marker matches no recurring filter', () => {
+  const statuses: TaskStatusDefinition[] = [{ id: 'Done', group: 'done' }, { id: 'Todo', group: 'todo' }]
+  const context = { statuses, lists: [], members: [] }
+  const base = { id: 't', title: 'x', updated_at: null, status: 'Done', due_date: null, priority: null, assignees: [], labels: [], description: null, task_list_id: null, recurrence: null }
+  const undone = toTaskRow({ ...base, recurrence_next: JSON.stringify({ id: 'n', state: 'undone' }) } as never, context)
+  assert.equal(undone.recurring, false)
+  const sealed = toTaskRow({ ...base, recurrence_next: ENCRYPTED } as never, context)
+  assert.deepEqual(sealed.encrypted_fields, ['recurrence_next'])
+  const filters = { includeCompleted: true, today: '2026-07-01' }
+  assert.equal(matchesTaskFilters(sealed, { ...filters, recurring: false }, statuses), false)
+  assert.equal(matchesTaskFilters(sealed, { ...filters, recurring: true }, statuses), false)
+  assert.equal(matchesTaskFilters(sealed, filters, statuses), true)
+})
+
+test('a list whose name is encrypted can be filtered by its exact id, never by a guess', async () => {
+  TASK_LIST_OBJECTS.push({ id: 'list-obj-sealed', workspace_id: 'workspace-1', type: 'task_list', title: ENCRYPTED, icon: null, parent_id: null, is_deleted: false, is_template: false, created_at: '2026-07-01T09:02:00.000Z', updated_at: '2026-07-01T09:02:00.000Z' })
+  LIST_ID_PROPS.push({ id: 'lp-3', object_id: 'list-obj-sealed', workspace_id: 'workspace-1', key: 'list_id', value_type: 'text', value_text: 'list-sealed', value_num: null, value_date: null, value_bool: null, value_ref: null })
+  TASKS.push({ id: 'task-in-sealed', title: 'Hidden list task', updated_at: '2026-07-01T10:00:00.000Z', props: { status: 'Todo', task_list_id: 'list-sealed' } })
+  try {
+    await withFake(async () => {
+      assert.deepEqual(ids(await listTasks({ task_list: 'list-sealed' })), ['task-in-sealed'])
+      const guess = await listTasks({ task_list: 'list-seal' }) as unknown as Record<string, unknown>
+      assert.equal(guess['code'], 'invalid_input', JSON.stringify(guess))
+      assert.match(String(guess['message']), /exact id/)
+    })
+  } finally {
+    TASK_LIST_OBJECTS.pop()
+    LIST_ID_PROPS.pop()
+    TASKS.pop()
+  }
+})
+
+test('an exact name two lists or two members share is refused, not silently given to the first', async () => {
+  TASK_LIST_OBJECTS.push({ id: 'list-obj-work-2', workspace_id: 'workspace-1', type: 'task_list', title: 'Work', icon: null, parent_id: null, is_deleted: false, is_template: false, created_at: '2026-07-01T09:03:00.000Z', updated_at: '2026-07-01T09:03:00.000Z' })
+  LIST_ID_PROPS.push({ id: 'lp-4', object_id: 'list-obj-work-2', workspace_id: 'workspace-1', key: 'list_id', value_type: 'text', value_text: 'list-work-2', value_num: null, value_date: null, value_bool: null, value_ref: null })
+  MEMBERS.push({ userId: 'user-3', name: 'Ada Lovelace', email: 'ada.l@example.org', role: 'editor' })
+  try {
+    await withFake(async () => {
+      const list = await listTasks({ task_list: 'work' }) as unknown as Record<string, unknown>
+      assert.equal(list['code'], 'invalid_input', JSON.stringify(list))
+      assert.match(String(list['message']), /2 task lists are named/)
+      assert.deepEqual(ids(await listTasks({ task_list: 'list-work' })), ['task-overdue'], 'the id still picks one')
+      const member = await listTasks({ assignee: 'Ada Lovelace' }) as unknown as Record<string, unknown>
+      assert.equal(member['code'], 'invalid_input', JSON.stringify(member))
+      assert.match(String(member['message']), /2 workspace members match/)
+      assert.deepEqual(ids(await listTasks({ assignee: 'ada@example.com' })), ['task-overdue'], 'the email still picks one')
+    })
+  } finally {
+    TASK_LIST_OBJECTS.pop()
+    LIST_ID_PROPS.pop()
+    MEMBERS.pop()
   }
 })

@@ -69,6 +69,7 @@ import {
   decodeTaskCursor,
   encodeTaskCursor,
   matchesTaskFilters,
+  readRecurrenceMarker,
   sortTaskRows,
   taskQueryFingerprint,
   toTaskRow,
@@ -747,11 +748,22 @@ function buildWeekPlanningTimeBlockTaskInput(input: {
   }
 }
 
+function markerRule(raw: string | null): string | null {
+  const marker = readRecurrenceMarker(raw)
+  return marker.state === 'live' ? marker.rule : null
+}
+
+
 function matchTaskList(query: string, lists: AuroraTaskList[]): AuroraTaskList | null {
   const q = query.trim().toLowerCase()
   if (!q) return null
-  const exact = lists.find((l) => l.id.toLowerCase() === q || l.name.trim().toLowerCase() === q)
-  if (exact) return exact
+  const byId = lists.find((l) => l.id.toLowerCase() === q)
+  if (byId) return byId
+  const exact = lists.filter((l) => l.name.trim().toLowerCase() === q)
+  if (exact.length > 1) {
+    throw new ToolInputError(`${exact.length} task lists are named "${query.trim()}". Pass the list's id from list_task_lists instead.`)
+  }
+  if (exact.length === 1) return exact[0]
   const partial = lists.filter((l) => l.name.toLowerCase().includes(q))
   return partial.length === 1 ? partial[0] : null
 }
@@ -759,13 +771,17 @@ function matchTaskList(query: string, lists: AuroraTaskList[]): AuroraTaskList |
 function matchMember(query: string, members: AuroraWorkspaceMember[]): AuroraWorkspaceMember | null {
   const q = query.trim().toLowerCase()
   if (!q) return null
-  const exact = members.find((m) => {
+  const byIdOrEmail = members.find((m) => m.id.toLowerCase() === q || m.email.trim().toLowerCase() === q)
+  if (byIdOrEmail) return byIdOrEmail
+  const exact = members.filter((m) => {
     const name = m.name?.trim().toLowerCase() ?? ''
-    const email = m.email.trim().toLowerCase()
-    const local = email.split('@')[0] ?? ''
-    return m.id.toLowerCase() === q || email === q || local === q || name === q
+    const local = m.email.trim().toLowerCase().split('@')[0] ?? ''
+    return local === q || name === q
   })
-  if (exact) return exact
+  if (exact.length > 1) {
+    throw new ToolInputError(`${exact.length} workspace members match "${query.trim()}". Pass the member's email or id from list_workspace_members instead.`)
+  }
+  if (exact.length === 1) return exact[0]
   const partial = members.filter((m) => {
     const name = m.name?.trim().toLowerCase() ?? ''
     const email = m.email.trim().toLowerCase()
@@ -1053,8 +1069,14 @@ async function executeToolCallUnsafe(
         const listQuery = readString(input['task_list'])
         if (listQuery !== null) {
           const match = matchTaskList(listQuery, snapshot.lists)
-          if (!match) return invalidInput(`Could not resolve task list: ${listQuery}`)
-          filters.taskListId = match.id
+          // A list whose name is encrypted can still be named by its exact id.
+          const sealedId = match ? null : snapshot.encryptedNameIds.find((id) => id === listQuery.trim()) ?? null
+          if (!match && !sealedId) {
+            return invalidInput(snapshot.encryptedCount > 0
+              ? `Could not resolve task list: ${listQuery}. ${snapshot.encryptedCount} task list(s) have encrypted names; pass such a list by its exact id.`
+              : `Could not resolve task list: ${listQuery}`)
+          }
+          filters.taskListId = match?.id ?? sealedId!
         }
         const assigneeQuery = readString(input['assignee'])
         if (assigneeQuery !== null) {
@@ -1110,8 +1132,9 @@ async function executeToolCallUnsafe(
         if (obj.type !== 'task') return invalidInput(`${id} is not a task`)
         const taskProps = propsToTaskProps(props, id)
         const recurrence = props.find((prop) => prop.key === 'recurrence')?.value_text || null
+        const recurrenceNext = props.find((prop) => prop.key === 'recurrence_next')?.value_text || null
         const row = toTaskRow(
-          { id, title: obj.title, updated_at: obj.updated_at, ...taskProps, recurrence },
+          { id, title: obj.title, updated_at: obj.updated_at, ...taskProps, recurrence, recurrence_next: recurrenceNext },
           { statuses: statuses.judged, lists: snapshot.lists, members },
         )
         const encrypted = [...(row.encrypted_fields ?? [])]
@@ -1142,7 +1165,9 @@ async function executeToolCallUnsafe(
             ...row,
             ...(encrypted.length ? { encrypted_fields: encrypted } : {}),
             description,
-            recurrence: readableRule,
+            // A completed repeating task shows the rule it ran on, kept in its marker;
+            // that rule never drives a forecast here.
+            recurrence: readableRule ?? (completed ? markerRule(recurrenceNext) : null),
             next_occurrence: next ? { id: recurrenceSuccessorId(id, next.date), due_date: next.dueDate } : made,
             // #51: the revision to pass back to update_task as expected_updated_at, as get_object's.
             updated_at: read.revision,
