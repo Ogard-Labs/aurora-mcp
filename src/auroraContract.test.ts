@@ -402,3 +402,17 @@ test('a slash after a function or class expression body divides (#49 review)', a
     assert.equal(stripComments(text), `${declaration}\n/a\\/*/.test(s)     `, declaration)
   }
 })
+
+test('a route string that is extended is drift (#49 review)', async () => {
+  const literalRoutes = AURORA_CONTRACT.filter((entry) => /^['"`]/.test(entry.source) && entry.source.endsWith(entry.source[0]))
+  assert.ok(literalRoutes.length > 0)
+  for (const route of literalRoutes) {
+    for (const extended of [` + '/v2'`, `\n  + '/v2'`, `.concat('/v2')`, ` /* c */ + suffix`, `[0]`]) {
+      const text = `app.get(${route.source}${extended}, handler)\n`
+      assert.equal((await checkDrift([route], '/checkout', async () => text)).length, 1, `${route.id}${extended}`)
+    }
+    for (const kept of [`app.get(${route.source}, handler)`, `const r = ${route.source};`, `[${route.source}]`, `{ path: ${route.source} }`, `f(${route.source} as const)`]) {
+      assert.deepEqual(await checkDrift([route], '/checkout', async () => `${kept}\n`), [], `${route.id}: ${kept}`)
+    }
+  }
+})

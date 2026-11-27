@@ -289,7 +289,9 @@ export function findInCode(raw, needle, literal, statement = false) {
     last = match.index
     const start = match.index + match[0].length - match[1].length
     const inCode = (!literal || literal[start] === 0) && literalsExact(raw, start, match[1].length, needle, literal)
-    if (inCode && !statement) return true
+    // An entry that is one whole string or template is an operand: the code after it must not go on with
+    // the value (`'/route' + '/v2'` is another route).
+    if (inCode && !statement && (!wholeLiteral(needle) || !continuesOperand(raw.slice(match.index + match[0].length)))) return true
     const tail = /^(?:[ \t]|\/\*(?:[^*\n]|\*(?!\/))*\*\/)*(?:([;}])|(?:\/\/[^\n]*)?(?:\r?\n|$))/.exec(raw.slice(match.index + match[0].length))
     if (inCode && tail && (tail[1] || !continuesExpression(raw.slice(match.index + match[0].length + tail[0].length)))) return true
     // Step one whole code point, so a search never restarts inside a surrogate pair (which the `u` flag would read back to the same match).
@@ -321,6 +323,24 @@ function literalsExact(raw, start, length, needle, literal) {
     }
   }
   return true
+}
+
+/** Whether `needle` is one string or template literal and nothing else. */
+function wholeLiteral(needle) {
+  const quote = needle[0]
+  if (!`'"\``.includes(quote) || needle.length < 2 || needle[needle.length - 1] !== quote) return false
+  for (let i = 1; i < needle.length - 1; i += 1) {
+    if (needle[i] === '\\') i += 1
+    else if (needle[i] === quote) return false
+  }
+  return true
+}
+
+/** Whether code that starts `rest` (after whitespace and comments) goes on with the operand before it. */
+function continuesOperand(rest) {
+  const code = rest.replace(/^(?:\s|\/\/[^\n]*|\/\*(?:[^*]|\*(?!\/))*\*\/)*/, '')
+  // A `(` or a backtick after a string would call it, which no route does.
+  return new RegExp(String.raw`^(?:[+\-*/%.?\[&|=<>^!]|(?:in|instanceof)(?!${NAME}))`, 'u').test(code)
 }
 
 /**
