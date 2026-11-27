@@ -128,3 +128,14 @@ test('a renamed task list key or members route is drift (#49 review)', async () 
   assert.equal(auroraRoute('workspaceMembers', { workspaceId: 'ws1' }), '/workspaces/ws1/members')
   assert.deepEqual(Object.values(TASK_LIST_PROPERTY_KEYS), ['list_id', 'default_status', 'position'])
 })
+
+test('a string constant is drift when its initializer goes on past the old literal (#49 review)', async () => {
+  // Every entry that is one `const NAME = '...'` statement must end its line.
+  for (const entry of AURORA_CONTRACT.filter((item) => /^(export )?const \w+ = '[^']*'$/.test(collapse(item.source)))) {
+    assert.ok(entry.lineEnd, `${entry.id} ends its line`)
+  }
+  const read = fakeCheckout((file, text) => file === 'packages/core/src/lib/taskListObjects.ts'
+    ? text.replace("export const TASK_LIST_ID_KEY = 'list_id'", "export const TASK_LIST_ID_KEY = 'list_id' + '_v2'")
+    : text)
+  assert.deepEqual((await checkDrift(AURORA_CONTRACT, '/checkout', read)).map((item: { entry: { id: string } }) => item.entry.id), ['task-list-key-list_id'])
+})

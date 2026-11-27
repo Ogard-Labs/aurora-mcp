@@ -125,6 +125,7 @@ const taskKey = (constant: string, value: string): AuroraContractEntry => ({
   file: TASKS_FILE,
   source: `const ${constant} = '${value}'`,
   usedBy: ['src/auroraClient.ts', 'src/taskRecurrence.ts'],
+  lineEnd: true,
 })
 
 export const AURORA_CONTRACT: readonly AuroraContractEntry[] = [
@@ -161,6 +162,7 @@ export const AURORA_CONTRACT: readonly AuroraContractEntry[] = [
     file: 'packages/core/src/lib/workspaceConfigObject.ts',
     source: `export const WORKSPACE_CONFIG_OBJECT_TYPE = '${WORKSPACE_CONFIG_OBJECT_TYPE}'`,
     usedBy: ['src/objectTypes.ts', 'src/taskStatuses.ts'],
+    lineEnd: true,
   },
   {
     id: 'workspace-config-id-alphabet',
@@ -190,6 +192,7 @@ export const AURORA_CONTRACT: readonly AuroraContractEntry[] = [
     file: 'packages/core/src/lib/taskStatusConfig.ts',
     source: `export const TASK_STATUS_CONFIG_PROPERTY_KEY = '${TASK_STATUS_CONFIG_PROPERTY_KEY}'`,
     usedBy: ['src/taskStatuses.ts'],
+    lineEnd: true,
   },
   {
     id: 'task-status-config-version',
@@ -207,6 +210,7 @@ export const AURORA_CONTRACT: readonly AuroraContractEntry[] = [
     file: 'packages/core/src/lib/taskStatusGroups.ts',
     source: `export const LEGACY_DONE_TASK_STATUS = '${LEGACY_DONE_TASK_STATUS}'`,
     usedBy: ['src/taskStatuses.ts'],
+    lineEnd: true,
   },
   {
     id: 'builtin-task-status-list',
@@ -225,6 +229,7 @@ export const AURORA_CONTRACT: readonly AuroraContractEntry[] = [
     file: 'packages/core/src/lib/crypto.ts',
     source: `export const E2EE_MARKER = '${E2EE_MARKER}'`,
     usedBy: ['src/taskStatuses.ts'],
+    lineEnd: true,
   },
   {
     id: 'recurrence-successor-id',
@@ -241,6 +246,7 @@ export const AURORA_CONTRACT: readonly AuroraContractEntry[] = [
     file: 'apps/api/src/lib/auth.ts',
     source: `export const EMAIL_VERIFICATION_REQUIRED_CODE = '${EMAIL_VERIFICATION_REQUIRED_CODE}'`,
     usedBy: ['src/errors.ts'],
+    lineEnd: true,
   },
   {
     id: 'error-write-refused',
@@ -249,6 +255,7 @@ export const AURORA_CONTRACT: readonly AuroraContractEntry[] = [
     file: 'apps/api/src/routes/collectionAccess.ts',
     source: `export const WRITE_REFUSED_CODE = '${WRITE_REFUSED_CODE}'`,
     usedBy: ['src/errors.ts'],
+    lineEnd: true,
   },
   {
     id: 'route-mcp-workspaces',
@@ -330,6 +337,7 @@ export const AURORA_CONTRACT: readonly AuroraContractEntry[] = [
     file: 'packages/core/src/lib/taskListObjects.ts',
     source: `export const TASK_LIST_ID_KEY = '${TASK_LIST_PROPERTY_KEYS.listId}'`,
     usedBy: ['src/auroraClient.ts'],
+    lineEnd: true,
   },
   ...(['defaultStatus', 'position'] as const).map((name): AuroraContractEntry => ({
     id: `task-list-key-${TASK_LIST_PROPERTY_KEYS[name]}`,
