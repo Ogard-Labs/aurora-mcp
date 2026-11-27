@@ -18,6 +18,26 @@ export function collapse(text) {
   return text.replace(/\s+/g, ' ').trim()
 }
 
+const WORD = /[A-Za-z0-9_$]/
+
+/**
+ * Whether `needle` appears in `text` as a whole: where it starts or ends with
+ * a name or number character, the text beside it must not continue that name
+ * or number. So `VERSION = 1` does not match `VERSION = 10`, and `'Done'` stays
+ * exact because its quotes end it.
+ */
+export function containsWhole(text, needle) {
+  if (!needle) return false
+  for (let at = text.indexOf(needle); at !== -1; at = text.indexOf(needle, at + 1)) {
+    const before = at > 0 ? text[at - 1] : ''
+    const after = text[at + needle.length] ?? ''
+    if (WORD.test(needle[0]) && WORD.test(before)) continue
+    if (WORD.test(needle[needle.length - 1]) && WORD.test(after)) continue
+    return true
+  }
+  return false
+}
+
 /** Checks each entry against the auroradocs checkout at `root`. Returns the drifted entries with a reason. */
 export async function checkDrift(entries, root, read = (file) => readFile(file, 'utf8')) {
   const cache = new Map()
@@ -30,7 +50,7 @@ export async function checkDrift(entries, root, read = (file) => readFile(file, 
     const text = await cache.get(file)
     if (typeof text !== 'string') {
       drifted.push({ entry, reason: `${entry.file} could not be read (${text.missing}); it may have moved` })
-    } else if (!text.includes(collapse(entry.source))) {
+    } else if (!containsWhole(text, collapse(entry.source))) {
       drifted.push({ entry, reason: `${entry.file} no longer contains: ${collapse(entry.source)}` })
     }
   }

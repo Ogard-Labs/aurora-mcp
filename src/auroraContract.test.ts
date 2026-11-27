@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { AURORA_CONTRACT, AURORA_ROUTES, auroraRoute, TASK_PROPERTY_KEYS } from './auroraContract.js'
 // @ts-expect-error plain JavaScript script without types
-import { checkDrift, collapse, formatDrift } from '../scripts/auroraDrift.mjs'
+import { checkDrift, collapse, containsWhole, formatDrift } from '../scripts/auroraDrift.mjs'
 
 test('every contract entry has a unique id and source text that holds the value the code uses', () => {
   const ids = AURORA_CONTRACT.map((entry) => entry.id)
@@ -61,4 +61,17 @@ test('routes are filled from the contract, and a missing segment is refused', ()
   assert.equal(auroraRoute('mcpWorkspaces'), '/api/mcp/workspaces')
   assert.equal(auroraRoute('knowledgeObject', { workspaceId: 'ws1', objectId: 'o1' }), '/api/knowledge/workspaces/ws1/objects/o1')
   assert.throws(() => auroraRoute('knowledgeRecent'), /needs workspaceId/)
+})
+
+test('a contract value must match whole: a longer number or name beside it is drift (#49 review)', async () => {
+  assert.equal(containsWhole('export const TASK_STATUS_CONFIG_VERSION = 10', 'export const TASK_STATUS_CONFIG_VERSION = 1'), false)
+  assert.equal(containsWhole('export const TASK_STATUS_CONFIG_VERSION = 1\n', 'export const TASK_STATUS_CONFIG_VERSION = 1'), true)
+  assert.equal(containsWhole('const MY_STATUS_KEY = 1; const STATUS_KEY = 2', 'STATUS_KEY = 2'), true)
+  assert.equal(containsWhole('const MY_STATUS_KEY = 2', 'STATUS_KEY = 2'), false)
+  assert.equal(containsWhole("x = 'Done';", "'Done'"), true)
+  const version = AURORA_CONTRACT.find((entry) => /= 1$/.test(collapse(entry.source)))
+  assert.ok(version, 'the contract has an entry ending in a number')
+  const bumped = async () => collapse(version.source) + '0'
+  const drifted = await checkDrift([version], '/checkout', bumped)
+  assert.equal(drifted.length, 1)
 })
