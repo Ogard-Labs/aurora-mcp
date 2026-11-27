@@ -216,3 +216,18 @@ test('a stale copy of a value in a comment is not live code (#49 review)', async
   assert.equal(stripComments('const a = "/* no */" /* yes */;'), 'const a = "/* no */"          ;')
   assert.equal(stripComments('const t = `a // b` // c'), 'const t = `a // b`     ')
 })
+
+test('comment markers inside regular expressions and nested templates are not comments (#49 review)', async () => {
+  const version = AURORA_CONTRACT.find((entry) => entry.id === 'task-status-config-version')
+  assert.ok(version)
+  const check = async (before: string) => (await checkDrift([version], '/checkout', async () => `${before}\n${version.source}\n`)).length
+  assert.equal(await check('const separator = /[/*]/'), 0, 'regex class')
+  assert.equal(await check('const slashes = /\\/\\*/g'), 0, 'escaped regex')
+  assert.equal(await check('const x = a ? /\\/\\// : b'), 0, 'regex after ?')
+  assert.equal(await check('const t = `${`/*`}`'), 0, 'nested template')
+  assert.equal(await check('const t = `a ${ { b: `/*` }.b } c`'), 0, 'braces inside an interpolation')
+  assert.equal(await check('const half = total / 2 /* halved */'), 0, 'division then a real comment')
+  assert.equal(stripComments('const r = /a\\/b/ // c'), 'const r = /a\\/b/     ')
+  assert.equal(stripComments('x = y / 2 // z'), 'x = y / 2     ')
+  assert.equal(stripComments('const t = `${a /* in */}`'), 'const t = `${a         }`')
+})

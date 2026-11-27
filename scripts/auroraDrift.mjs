@@ -20,17 +20,40 @@ export function collapse(text) {
 
 const WORD = /[A-Za-z0-9_$]/
 
+const REGEX_AFTER_WORD = /(?:^|[^A-Za-z0-9_$])(?:return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$/
+
 /**
  * `source` with every comment blanked out: each comment character becomes a
- * space, and line breaks stay, so line structure is kept. Quoted strings and
- * template literals are read through, so a `//` inside one stays. The drift
- * check matches against this, so a stale copy of a value in a comment never
- * stands in for the live code.
+ * space, and line breaks stay, so line structure is kept. It is a small lexer:
+ * quoted strings, template literals (with `${...}` nested to any depth) and
+ * regular expression literals are read through, so a `//` or `/*` inside one
+ * stays. The drift check matches against this, so a stale copy of a value in a
+ * comment never stands in for the live code.
  */
 export function stripComments(source) {
   let out = ''
   let index = 0
+  // One entry per open `${`: the brace depth inside that interpolation.
+  const interpolations = []
   const blank = (text) => text.replace(/[^\r\n\u2028\u2029]/g, ' ')
+  const take = (stop) => { out += source.slice(index, stop); index = stop }
+  // Reads a template literal from just after its opening backtick, up to its
+  // closing one or to the next `${`. Returns true when it stopped at `${`.
+  const readTemplate = () => {
+    let stop = index
+    while (stop < source.length && source[stop] !== '`') {
+      if (source[stop] === '\\') { stop += 2; continue }
+      if (source[stop] === '$' && source[stop + 1] === '{') { take(stop + 2); interpolations.push(0); return }
+      stop += 1
+    }
+    take(Math.min(stop + 1, source.length))
+  }
+  const regexMayStart = () => {
+    const before = out.replace(/\s+$/, '')
+    if (!before) return true
+    if (/[A-Za-z0-9_$]$/.test(before)) return REGEX_AFTER_WORD.test(before)
+    return /[(,=:[!&|?{};+\-*%<>~^]$/.test(before)
+  }
   while (index < source.length) {
     const char = source[index]
     const next = source[index + 1]
@@ -44,14 +67,37 @@ export function stripComments(source) {
       const stop = end === -1 ? source.length : end + 2
       out += blank(source.slice(index, stop))
       index = stop
-    } else if (char === "'" || char === '"' || char === '`') {
+    } else if (char === "'" || char === '"') {
       let stop = index + 1
-      while (stop < source.length && source[stop] !== char) stop += source[stop] === '\\' ? 2 : 1
-      out += source.slice(index, stop + 1)
-      index = stop + 1
+      while (stop < source.length && source[stop] !== char && source[stop] !== '\n') stop += source[stop] === '\\' ? 2 : 1
+      take(Math.min(stop + 1, source.length))
+    } else if (char === '`') {
+      take(index + 1)
+      readTemplate()
+    } else if (char === '{' && interpolations.length) {
+      interpolations[interpolations.length - 1] += 1
+      take(index + 1)
+    } else if (char === '}' && interpolations.length) {
+      take(index + 1)
+      if (interpolations[interpolations.length - 1] === 0) {
+        interpolations.pop()
+        readTemplate()
+      } else {
+        interpolations[interpolations.length - 1] -= 1
+      }
+    } else if (char === '/' && regexMayStart()) {
+      let stop = index + 1
+      let inClass = false
+      while (stop < source.length && source[stop] !== '\n') {
+        if (source[stop] === '\\') { stop += 2; continue }
+        if (source[stop] === '[') inClass = true
+        else if (source[stop] === ']') inClass = false
+        else if (source[stop] === '/' && !inClass) break
+        stop += 1
+      }
+      take(Math.min(stop + 1, source.length))
     } else {
-      out += char
-      index += 1
+      take(index + 1)
     }
   }
   return out
