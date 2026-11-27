@@ -327,3 +327,16 @@ test('a declaration quoted in a string or template does not stand in for the liv
   assert.equal([...literal].join(''), '00000000000110000110')
   assert.equal(findInCode('`x ${ VERSION = 1 }`', 'VERSION = 1', scanSource('`x ${ VERSION = 1 }`').literal), true)
 })
+
+test('a slash after a TypeScript non-null assertion divides (#49 review)', async () => {
+  const version = AURORA_CONTRACT.find((entry) => entry.id === 'task-status-config-version')
+  assert.ok(version)
+  for (const operand of ['count!', 'items[0]!', 'get()!', 'count!!']) {
+    const stale = `const half = ${operand} / 2 /* ${version.source}; old */\nexport const TASK_STATUS_CONFIG_VERSION = 2\n`
+    assert.equal((await checkDrift([version], '/checkout', async () => stale)).length, 1, operand)
+  }
+  // A `!` that negates still lets a regex start.
+  assert.equal(stripComments('return !/a\\/*/.test(s) // c'), 'return !/a\\/*/.test(s)     ')
+  assert.equal(stripComments('if (x) !/a\\/*/.test(s) // c'), 'if (x) !/a\\/*/.test(s)     ')
+  assert.equal(stripComments('x = !/a\\/*/.test(s) // c'), 'x = !/a\\/*/.test(s)     ')
+})

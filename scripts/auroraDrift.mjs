@@ -91,10 +91,16 @@ export function scanSource(source) {
     if (!before) return true
     if (ENDS_WITH_NAME.test(before)) return endsWithKeyword(before, REGEX_AFTER_WORD)
     if (before.endsWith(')')) return closedControl
-    // A postfix `++` or `--` (after a name or a closing bracket) ends an operand, so a `/` after it divides.
-    if (/(?:\+\+|--)$/.test(before)) {
-      const operand = before.slice(0, -2).replace(/\s+$/, '')
-      if (ENDS_WITH_NAME.test(operand) || /[)\]]$/.test(operand)) return false
+    // A postfix `++` or `--`, or TypeScript's non-null `!`, after an operand
+    // (a name that is not a keyword, a `]`, or a `)` that closes no condition)
+    // ends it, so a `/` after it divides. `return !/x/` still starts a regex.
+    const postfix = /(?:\+\+|--|!+)$/.exec(before)
+    if (postfix) {
+      const operand = before.slice(0, postfix.index).replace(/\s+$/, '')
+      const endsOperand = ENDS_WITH_NAME.test(operand)
+        ? !endsWithKeyword(operand, REGEX_AFTER_WORD)
+        : operand.endsWith(']') || (operand.endsWith(')') && !closedControl)
+      if (endsOperand) return false
     }
     // A `/` that divides is an operator, so a regex may follow; the closing `/` of a regex is not one.
     if (before.endsWith('/')) return before.length !== regexEnd
