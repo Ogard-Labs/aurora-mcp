@@ -795,7 +795,17 @@ const RESULT_SCHEMAS: Readonly<Record<string, JsonObjectSchema[]>> = {
 }
 
 const NON_IDEMPOTENT_TOOLS = new Set(['schedule_task_block', 'create_object', 'create_task', 'append_block', 'create_template', 'create_from_template', 'import_obsidian_vault'])
-const LOCAL_TOOLS = new Set(['list_workspaces', 'get_mcp_tool_coverage', 'get_mcp_workflow_recipes', 'get_custom_database_recipes', 'analyze_obsidian_vault', 'get_obsidian_import_plan', 'import_obsidian_vault', 'get_obsidian_import_status'])
+/**
+ * Tools that may replace or remove what is already there (#51). Clients use
+ * `destructiveHint` to decide when to ask the person first. `delete_object` is a
+ * reversible soft delete, but it still takes the object out of view, so it stays
+ * here (docs/tools.md). Additive-only tools (`update_object_type`,
+ * `apply_custom_database_plan`, `import_obsidian_vault`, creates, appends and
+ * restores) are not destructive.
+ */
+const DESTRUCTIVE_TOOLS = new Set([
+  'delete_object', 'set_content', 'update_object', 'update_object_title', 'set_property', 'update_task', 'schedule_task_block',
+])
 const WORKSPACE_SELECTOR_FREE_TOOLS = new Set(['list_workspaces', 'get_mcp_tool_coverage', 'get_mcp_workflow_recipes', 'get_custom_database_recipes'])
 
 type McpToolDeclaration = Omit<McpToolDefinition, 'title' | 'outputSchema' | 'annotations'>
@@ -1332,9 +1342,10 @@ export function getToolDefinitions(): McpToolDefinition[] {
     }),
     annotations: {
       readOnlyHint: TOOL_EFFECTS[tool.name] === 'read',
-      destructiveHint: tool.name === 'delete_object',
+      destructiveHint: DESTRUCTIVE_TOOLS.has(tool.name),
       idempotentHint: !NON_IDEMPOTENT_TOOLS.has(tool.name),
-      openWorldHint: !LOCAL_TOOLS.has(tool.name),
+      // Every tool works on the person's own workspace or local vault, never the open web.
+      openWorldHint: false,
     },
   }))
 }

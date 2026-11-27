@@ -124,8 +124,18 @@ as execution constraints, not suggestions.
 | Obsidian dry run | `read:objects` plus local vault authorization | "Analyze the configured vault, show the plan and warnings, and do not import." |
 | Approved Obsidian import | `read:objects`, `write:objects`, `write:content` | "After my later acceptance, import bounded batches with this exact plan ID/hash and report status." |
 
+Tool annotations mark every tool that replaces or removes data with
+`destructiveHint: true`: `set_content`, `update_object`, `update_object_title`,
+`set_property`, `update_task`, `schedule_task_block` and `delete_object`.
+Clients that confirm destructive calls ask before these run. Tools that only add
+(creates, `append_block`, `restore_object`, `update_object_type`,
+`apply_custom_database_plan`, `import_obsidian_vault`) are not marked
+destructive. `openWorldHint` is `false` for every tool, since each one works on
+the person's own workspace or local vault.
+
 `delete_object` is a write operation even though Aurora uses reversible
-soft deletion. Treat it as destructive from the client's point of view.
+soft deletion. It stays marked destructive, because it takes the object out of
+view.
 Use `restore_object` for an explicitly identified trashed object; repeated calls
 are safe and report `changed: false` when the object is already active.
 
