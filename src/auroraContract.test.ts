@@ -139,3 +139,15 @@ test('a string constant is drift when its initializer goes on past the old liter
     : text)
   assert.deepEqual((await checkDrift(AURORA_CONTRACT, '/checkout', read)).map((item: { entry: { id: string } }) => item.entry.id), ['task-list-key-list_id'])
 })
+
+test('a statement continued on the next line is drift too (#49 review)', () => {
+  const needle = "export const TASK_LIST_ID_KEY = 'list_id'"
+  for (const next of ["  + '_v2'", '  .toUpperCase()', '  as const', '\n  // why\n  + "_v2"', "  /* why */ + '_v2'", '  ?? fallback']) {
+    assert.equal(endsLine(`${needle}\n${next}\n`, needle), false, next)
+  }
+  for (const next of ['', '/** Next. */\nexport const OTHER = 1', 'const KEY = {', '}', 'export function f() {}']) {
+    assert.equal(endsLine(`${needle}\n${next}\n`, needle), true, next)
+  }
+  // A later whole copy still counts when an earlier one is continued.
+  assert.equal(endsLine(`${needle}\n+ 'x'\n${needle}\n`, needle), true)
+})

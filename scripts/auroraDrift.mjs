@@ -39,16 +39,29 @@ export function containsWhole(text, needle) {
 }
 
 /**
- * Whether `needle` appears in `raw` as the rest of a line: only an optional
- * `;` and a line comment may follow it. An entry sets `lineEnd` when its source
- * is a whole statement, so `VERSION = 1` does not match `VERSION = 1.1` or
- * `VERSION = 1 + 1`. Runs of whitespace in `needle` match any whitespace.
+ * Whether `needle` appears in `raw` as a whole statement: only an optional `;`
+ * and a line comment may follow it on its line, and the next code after it
+ * (past blank lines and comments) must not continue the expression. An entry
+ * sets `lineEnd` when its source is a whole statement, so `VERSION = 1` does
+ * not match `VERSION = 1.1`, `VERSION = 1 + 1`, or `VERSION = 1` with
+ * `+ 1` on the next line. Runs of whitespace in `needle` match any whitespace.
  */
 export function endsLine(raw, needle) {
   const words = collapse(needle).split(' ').filter(Boolean)
   if (words.length < 1) return false
   const body = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+')
-  return new RegExp(`(?:^|[^A-Za-z0-9_$])${body}[ \\t]*;?[ \\t]*(?://[^\\n]*)?(?:\\r?\\n|$)`).test(raw)
+  const pattern = new RegExp(`(?:^|[^A-Za-z0-9_$])${body}[ \\t]*;?[ \\t]*(?://[^\\n]*)?(?:\\r?\\n|$)`, 'g')
+  for (let match = pattern.exec(raw); match; match = pattern.exec(raw)) {
+    if (!continuesExpression(raw.slice(match.index + match[0].length))) return true
+    pattern.lastIndex = match.index + 1
+  }
+  return false
+}
+
+/** Whether code that starts `rest` (after blank lines and comments) would join the expression before it. */
+function continuesExpression(rest) {
+  const code = rest.replace(/^(?:\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/)*/, '')
+  return /^(?:[+\-*/%.?([`&|=<>^,:]|(?:as|satisfies|in|instanceof)(?![A-Za-z0-9_$]))/.test(code)
 }
 
 /** Checks each entry against the auroradocs checkout at `root`. Returns the drifted entries with a reason. */
