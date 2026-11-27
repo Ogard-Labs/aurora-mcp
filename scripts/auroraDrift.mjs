@@ -214,7 +214,8 @@ export function findInCode(raw, needle, literal, statement = false) {
     ? escape(word)
     : `${/^(?:return|throw|yield)$/.test(words[index - 1]) ? '[^\\S\\r\\n\\u2028\\u2029]+' : '\\s+'}${escape(word)}`).join('')
   const end = new RegExp(NAME, 'u').test(words[words.length - 1].slice(-1)) ? `(?!${NAME})` : ''
-  const pattern = new RegExp(`${NOT_NAME}(${body})${end}`, 'gu')
+  // A name boundary on the left only when the needle starts with a name: a template may follow a tag (`String.raw`).
+  const pattern = new RegExp(`${WORD.test(words[0][0]) ? NOT_NAME : ''}(${body})${end}`, 'gu')
   let last = -1
   for (let match = pattern.exec(raw); match; match = pattern.exec(raw)) {
     // Each step must move forward; a regression here must fail, not hang the check.

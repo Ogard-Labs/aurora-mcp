@@ -300,8 +300,9 @@ test('a slash after a postfix ++ or -- divides (#49 review)', async () => {
   }
   // The closing `/` of a regex is not a division sign: the `/` after it divides, and the comment stays a comment.
   assert.equal(stripComments('n = /a/ / 2 /* c */'), 'n = /a/ / 2        ')
-  // A prefix ++ still lets a regex start where an operand is expected.
-  assert.equal(stripComments('x = ++/a/.lastIndex // c'), 'x = ++/a/.lastIndex     ')
+  // After a postfix ++ and a binary or unary operator, a regex may start: its `/*` stays and the line comment is blanked.
+  assert.equal(stripComments('x = a++ + /a\\/*/.lastIndex // c'), 'x = a++ + /a\\/*/.lastIndex     ')
+  assert.equal(stripComments('x = 1 - -/a\\/*/.lastIndex // c'), 'x = 1 - -/a\\/*/.lastIndex     ')
 })
 
 test('a declaration quoted in a string or template does not stand in for the live one (#49 review)', async () => {
@@ -339,4 +340,11 @@ test('a slash after a TypeScript non-null assertion divides (#49 review)', async
   assert.equal(stripComments('return !/a\\/*/.test(s) // c'), 'return !/a\\/*/.test(s)     ')
   assert.equal(stripComments('if (x) !/a\\/*/.test(s) // c'), 'if (x) !/a\\/*/.test(s)     ')
   assert.equal(stripComments('x = !/a\\/*/.test(s) // c'), 'x = !/a\\/*/.test(s)     ')
+})
+
+test('a route template after a tag such as String.raw still matches (#49 review)', async () => {
+  const route = AURORA_CONTRACT.find((entry) => entry.id === 'route-project-context')
+  assert.ok(route)
+  const text = `const path = String.raw${route.source}\n`
+  assert.deepEqual(await checkDrift([route], '/checkout', async () => text), [])
 })
