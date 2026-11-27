@@ -348,8 +348,11 @@ function joinsOperandBefore(before) {
 /** Whether code that starts `rest` (after whitespace and comments) goes on with the operand before it. */
 function continuesOperand(rest) {
   const skip = (text) => text.replace(/^(?:\s|\/\/[^\n]*|\/\*(?:[^*]|\*(?!\/))*\*\/)*/, '')
-  // A TypeScript non-null `!` (not `!=`) does not change the value.
-  const code = skip(skip(rest).replace(/^(?:!(?!=))+/, ''))
+  // TypeScript's non-null `!` (not `!=`), `as T` and `satisfies T` do not change the value: skip them, then
+  // look at what follows.
+  const assertion = new RegExp(String.raw`^(?:!(?!=)|(?:as|satisfies)\s+(?:const|${NAME}+(?:\s*\.\s*${NAME}+)*(?:\s*<[^<>;]*>)?(?:\s*\[\s*\])*)(?!${NAME}))`, 'u')
+  let code = skip(rest)
+  for (let next = code.replace(assertion, ''); next !== code; next = code.replace(assertion, '')) code = skip(next)
   // A `(` or a backtick after a string would call it, which no route does.
   return new RegExp(String.raw`^(?:[+\-*/%.?\[&|=<>^!]|(?:in|instanceof)(?!${NAME}))`, 'u').test(code)
 }
