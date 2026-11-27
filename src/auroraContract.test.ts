@@ -142,12 +142,15 @@ test('a string constant is drift when its initializer goes on past the old liter
 
 test('a statement continued on the next line is drift too (#49 review)', () => {
   const needle = "export const TASK_LIST_ID_KEY = 'list_id'"
-  for (const next of ["  + '_v2'", '  .toUpperCase()', '  as const', '\n  // why\n  + "_v2"', "  /* why */ + '_v2'", '  ?? fallback']) {
+  for (const next of ["  + '_v2'", '  .toUpperCase()', '  in other', '\n  // why\n  + "_v2"', "  /* why */ + '_v2'", '  ?? fallback']) {
     assert.equal(endsLine(`${needle}\n${next}\n`, needle), false, next)
   }
   for (const next of ['', '/** Next. */\nexport const OTHER = 1', 'const KEY = {', '}', 'export function f() {}']) {
     assert.equal(endsLine(`${needle}\n${next}\n`, needle), true, next)
   }
+  // TypeScript never joins `as` or `satisfies` across a line break, and a `;` ends the statement.
+  for (const next of ['as()', 'satisfies(x)']) assert.equal(endsLine(`${needle}\n${next}\n`, needle), true, next)
+  for (const next of ['[a, b] = pair', '(async () => {})()', "+ 'x'"]) assert.equal(endsLine(`${needle};\n${next}\n`, needle), true, next)
   // A later whole copy still counts when an earlier one is continued.
   assert.equal(endsLine(`${needle}\n+ 'x'\n${needle}\n`, needle), true)
 })
