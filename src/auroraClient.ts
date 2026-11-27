@@ -6,7 +6,7 @@
  * Tool execution resolves a granted or verified workspace before data access.
  */
 import type { AuroraConnectionContext, ContentReadResult, GrantedWorkspace } from './contracts.js'
-import { AuroraApiError, ToolInputError, ToolNotFoundError } from './errors.js'
+import { AuroraApiError, ToolConflictError, ToolInputError, ToolNotFoundError } from './errors.js'
 import { isHiddenSystemObjectType, uncreatableObjectTypeReason } from './objectTypes.js'
 import type {
   CustomDatabaseTemplateDefault,
@@ -53,6 +53,8 @@ export type AuroraPropertyRecord = {
   value_date: string | null
   value_bool: boolean | null
   value_ref: string | null
+  /** When AuroraCloud last changed this row (#51 revisions). */
+  updated_at?: string | null
 }
 
 export type AuroraTemplateInput = {
@@ -706,12 +708,66 @@ export async function uploadAuroraMcpAttachment(input: {
   return response as AuroraAttachmentUpload
 }
 
-export async function updateObjectTitle(id: string, title: string, workspaceId: string): Promise<void> {
+export async function updateObjectTitle(
+  id: string,
+  title: string,
+  workspaceId: string,
+  options: { expectedObjectUpdatedAt?: string } = {},
+): Promise<void> {
   // Verify ownership before update
   const obj = await getObject(id, workspaceId)
   if (!obj) throw new ToolNotFoundError(`Object ${id} not found in this workspace`)
   const client = getAuroraClient()
-  await client.collection('objects').update(id, { title })
+  if (options.expectedObjectUpdatedAt === undefined) {
+    await client.collection('objects').update(id, { title })
+    return
+  }
+  // #51: AuroraCloud writes only over the row the caller checked.
+  await guardedWrite(() => client.collection('objects').update(id, {
+    title,
+    _expected_record: { updated_at: options.expectedObjectUpdatedAt },
+  }))
+}
+
+/** A row's id and time, as a write guard holds it (#51). `null`: the caller saw no row. */
+export type GuardedRow = { id: string; updated_at: string } | null
+
+const CHANGED_ON_AURORACLOUD = 'The object changed on AuroraCloud after it was read. Read it again with get_object, then retry with its new updated_at.'
+
+/** Runs a write that carries `_expected_record`; AuroraCloud's 409 for it becomes a conflict. */
+async function guardedWrite<T>(write: () => Promise<T>): Promise<T> {
+  try {
+    return await write()
+  } catch (error) {
+    if (error instanceof AuroraApiError && error.status === 409) throw new ToolConflictError(CHANGED_ON_AURORACLOUD)
+    throw error
+  }
+}
+
+/** The object's content row, for a guarded content write (#51). */
+export async function readContentRow(objectId: string, workspaceId: string): Promise<GuardedRow> {
+  const client = getAuroraClient()
+  const records = await client.collection('content').listPage({
+    filter: client.filter('object_id = {:id} && workspace_id = {:wid}', { id: objectId, wid: workspaceId }),
+    page: 1,
+    perPage: 1,
+  })
+  const row = records.items[0]
+  if (!row) return null
+  return { id: String(row.id), updated_at: String(row['updated_at'] ?? '') }
+}
+
+/** One property row, for a guarded property write (#51). */
+export async function readPropertyRow(objectId: string, workspaceId: string, key: string): Promise<GuardedRow> {
+  const client = getAuroraClient()
+  const records = await client.collection('object_properties').listPage({
+    filter: client.filter('object_id = {:oid} && key = {:key} && workspace_id = {:wid}', { oid: objectId, key, wid: workspaceId }),
+    page: 1,
+    perPage: 1,
+  })
+  const row = records.items[0]
+  if (!row) return null
+  return { id: String(row.id), updated_at: String(row['updated_at'] ?? '') }
 }
 
 export async function deleteObject(id: string, workspaceId: string): Promise<void> {
@@ -873,6 +929,7 @@ export async function setContent(
   objectId: string,
   workspaceId: string,
   contentJson: Record<string, unknown>,
+  options: { expectedContent?: GuardedRow } = {},
 ): Promise<void> {
   const obj = await getObject(objectId, workspaceId)
   if (!obj) throw new ToolNotFoundError(`Object ${objectId} not found in this workspace`)
@@ -885,6 +942,21 @@ export async function setContent(
   })
   if (existing.items.length > 0 && isE2eeEncryptedPayload(existing.items[0]['content_json'])) {
     throw new ToolInputError('Object content is end-to-end encrypted and cannot be modified by the MCP server')
+  }
+  if (options.expectedContent !== undefined) {
+    // #51: only over the row the caller read before its check, or none if it saw none.
+    const expected = options.expectedContent
+    const row = existing.items[0]
+    if ((row ? String(row.id) : null) !== (expected?.id ?? null)) throw new ToolConflictError(CHANGED_ON_AURORACLOUD)
+    if (row && expected) {
+      await guardedWrite(() => client.collection('content').update(String(row.id), {
+        content_json: contentJson,
+        _expected_record: { updated_at: expected.updated_at },
+      }))
+    } else {
+      await guardedWrite(() => client.collection('content').create({ object_id: objectId, content_json: contentJson, _expected_record: null }))
+    }
+    return
   }
   if (existing.items.length > 0) {
     await client.collection('content').update(String(existing.items[0].id), { content_json: contentJson })
@@ -968,6 +1040,7 @@ export async function listProperties(
           value_date: (r['value_date'] as string | null) ?? null,
           value_bool: r['value_bool'] != null ? Boolean(r['value_bool']) : null,
           value_ref: (r['value_ref'] as string | null) ?? null,
+          updated_at: typeof r['updated_at'] === 'string' ? r['updated_at'] : null,
         })
       }
       if (!records.totalPages || page >= records.totalPages) break
@@ -985,6 +1058,7 @@ export async function upsertProperty(
   key: string,
   valueType: string,
   value: string,
+  options: { expectedRow?: GuardedRow } = {},
 ): Promise<void> {
   // Verify object belongs to workspace
   const obj = await getObject(objectId, workspaceId)
@@ -1006,16 +1080,32 @@ export async function upsertProperty(
     valueType === 'boolean' ? parseBooleanValue(value) :
     value
 
+  const fields = {
+    value_type: valueType,
+    value_text: null,
+    value_num: null,
+    value_date: null,
+    value_bool: null,
+    value_ref: null,
+    [valueField]: parsedValue,
+  }
+  if (options.expectedRow !== undefined) {
+    // #51: only over the row the caller read before its check, or none if it saw none.
+    const expected = options.expectedRow
+    const row = existing.items[0]
+    if ((row ? String(row.id) : null) !== (expected?.id ?? null)) throw new ToolConflictError(CHANGED_ON_AURORACLOUD)
+    if (row && expected) {
+      await guardedWrite(() => client.collection('object_properties').update(String(row.id), {
+        ...fields,
+        _expected_record: { updated_at: expected.updated_at },
+      }))
+    } else {
+      await guardedWrite(() => client.collection('object_properties').create({ object_id: objectId, key, value_type: valueType, [valueField]: parsedValue, _expected_record: null }))
+    }
+    return
+  }
   if (existing.items.length > 0) {
-    await client.collection('object_properties').update(String(existing.items[0].id), {
-      value_type: valueType,
-      value_text: null,
-      value_num: null,
-      value_date: null,
-      value_bool: null,
-      value_ref: null,
-      [valueField]: parsedValue,
-    })
+    await client.collection('object_properties').update(String(existing.items[0].id), fields)
   } else {
     await client.collection('object_properties').create({ object_id: objectId, key, value_type: valueType, [valueField]: parsedValue })
   }

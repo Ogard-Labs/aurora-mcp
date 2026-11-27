@@ -17,6 +17,9 @@ import {
   readWorkspaceTaskStatuses,
   createObject,
   updateObjectTitle,
+  readContentRow,
+  readPropertyRow,
+  getContentJson,
   deleteObject,
   restoreObject,
   upsertProperty,
@@ -58,7 +61,7 @@ import type { McpCanvasReadResult, McpWeekPlan } from './planningTools.js'
 import { getMcpToolCoverageAudit, getMcpWorkflowRecipes } from './toolCatalog.js'
 import type { McpToolCoverageAudit, McpWorkflowRecipe } from './toolCatalog.js'
 import { readBoundedInteger, readWorkspaceSelector } from './input.js'
-import { ToolInputError, toSafeToolError } from './errors.js'
+import { ToolConflictError, ToolInputError, toSafeToolError } from './errors.js'
 import { isHiddenSystemObjectType, uncreatableObjectTypeReason } from './objectTypes.js'
 import { getProjectContext, listProjectChanges } from './projectContext.js'
 import {
@@ -123,6 +126,8 @@ export type ToolResult =
   | {
       type: 'object'
       object: { id: string; title: string | null; type: string; icon: string | null }
+      /** The object's revision (#51): pass it back as `expected_updated_at`. */
+      updated_at: string
       availability: Availability
       content: string | null
       properties: Record<string, string>
@@ -145,6 +150,13 @@ export type ToolResult =
   | { type: 'deleted'; id: string }
   | { type: 'restored'; id: string; changed: boolean }
   | { type: 'content_set'; id: string }
+  | {
+      /** What `dry_run: true` would have written, with nothing written (#51). */
+      type: 'dry_run'
+      id: string
+      title?: { old: string | null; new: string }
+      content?: ContentReplacementSummary
+    }
   | { type: 'content_appended'; id: string }
   | { type: 'property_set'; objectId: string; key: string; value: string }
   | { type: 'knowledge_sources'; sources: WorkspaceKnowledgeSource[] }
@@ -290,6 +302,103 @@ function invalidInput(message: string): ToolErrorResult {
 
 function notFound(message: string): ToolErrorResult {
   return { type: 'error', code: 'not_found', message, retryable: false }
+}
+
+// ── Revisions and guarded writes (#51) ───────────────────────────────────────
+
+/**
+ * An object's revision: the latest `updated_at` of the object row and its
+ * property rows. A title or body change moves the object row on AuroraCloud;
+ * a property change moves only its own row, so both count.
+ */
+function objectRevision(objectUpdatedAt: string, properties: readonly AuroraPropertyRecord[]): string {
+  let latest = objectUpdatedAt
+  let latestTime = Date.parse(objectUpdatedAt)
+  for (const property of properties) {
+    const time = property.updated_at ? Date.parse(property.updated_at) : Number.NaN
+    if (!Number.isNaN(time) && (Number.isNaN(latestTime) || time > latestTime)) {
+      latest = property.updated_at!
+      latestTime = time
+    }
+  }
+  return latest
+}
+
+function sameInstant(left: string, right: string): boolean {
+  const a = Date.parse(left)
+  const b = Date.parse(right)
+  return Number.isNaN(a) || Number.isNaN(b) ? left === right : a === b
+}
+
+/** `expected_updated_at`, when given: undefined when absent, an error result when malformed. */
+function readExpectedUpdatedAt(input: Record<string, unknown>): string | undefined | ToolErrorResult {
+  if (!('expected_updated_at' in input) || input['expected_updated_at'] === undefined || input['expected_updated_at'] === null) return undefined
+  const value = readString(input['expected_updated_at'])
+  if (!value || Number.isNaN(Date.parse(value))) return invalidInput('expected_updated_at must be the updated_at value get_object returned')
+  return value
+}
+
+function isErrorResult(value: unknown): value is ToolErrorResult {
+  return typeof value === 'object' && value !== null && (value as { type?: unknown }).type === 'error'
+}
+
+/**
+ * Reads the object and its properties now and refuses when their revision is
+ * not `expected`. Call it after reading the rows the write will replace, so a
+ * change made after this check is caught by those rows' own `_expected_record`.
+ * Returns the object row's own `updated_at`, for a guarded title write.
+ */
+async function assertObjectRevision(id: string, workspaceId: string, expected: string): Promise<string> {
+  const current = await getObject(id, workspaceId)
+  if (!current) throw new ToolConflictError(`Object ${id} is no longer in this workspace.`)
+  const revision = objectRevision(current.updated_at, await listProperties([id], workspaceId))
+  if (!sameInstant(revision, expected)) {
+    throw new ToolConflictError(
+      `Object ${id} changed on AuroraCloud after it was read (updated_at is now ${revision}). Read it again with get_object, then retry.`,
+      revision,
+    )
+  }
+  return current.updated_at
+}
+
+/** Top-level block texts of a stored document, for a dry-run summary. */
+function documentLines(doc: Record<string, unknown> | null): string[] {
+  const blocks = Array.isArray(doc?.['content']) ? doc['content'] as Record<string, unknown>[] : []
+  const textOf = (node: Record<string, unknown>): string => {
+    if (typeof node['text'] === 'string') return node['text']
+    const children = Array.isArray(node['content']) ? node['content'] as Record<string, unknown>[] : []
+    return children.map(textOf).join('')
+  }
+  return blocks.map(textOf)
+}
+
+const DRY_RUN_CHANGED_LINES = 5
+
+type ContentReplacementSummary = {
+  old_blocks: number
+  new_blocks: number
+  old_chars: number
+  new_chars: number
+  first_changed_lines: Array<{ line: number; old: string | null; new: string | null }>
+}
+
+/** What replacing `current` with `text` would change, without writing it (#51). */
+function contentReplacementSummary(current: Record<string, unknown> | null, text: string): ContentReplacementSummary {
+  const oldLines = documentLines(current)
+  const newLines = text.split('\n')
+  const changed: Array<{ line: number; old: string | null; new: string | null }> = []
+  for (let index = 0; index < Math.max(oldLines.length, newLines.length) && changed.length < DRY_RUN_CHANGED_LINES; index++) {
+    const before = oldLines[index] ?? null
+    const after = newLines[index] ?? null
+    if (before !== after) changed.push({ line: index + 1, old: before, new: after })
+  }
+  return {
+    old_blocks: oldLines.length,
+    new_blocks: newLines.length,
+    old_chars: oldLines.join('\n').length,
+    new_chars: text.length,
+    first_changed_lines: changed,
+  }
 }
 
 async function loadStoredObsidianImportPlan(
@@ -733,6 +842,8 @@ async function executeToolCallUnsafe(
         return {
           type: 'object',
           object: { id: obj.id, title: obj.title, type: obj.type, icon: obj.icon },
+          // #51: pass this back as expected_updated_at so a write refuses if the object changed meanwhile.
+          updated_at: objectRevision(obj.updated_at, rawProps),
           availability: content.availability,
           content: content.text,
           ...propertyResult,
@@ -1161,6 +1272,9 @@ async function executeToolCallUnsafe(
         const id = readString(input['id'])
         if (!id) return invalidInput('Task ID is required')
 
+        const expectedUpdatedAt = readExpectedUpdatedAt(input)
+        if (isErrorResult(expectedUpdatedAt)) return expectedUpdatedAt
+
         const obj = await getObject(id, workspaceId)
         if (!obj) return notFound(`Object ${id} not found in this workspace`)
         if (obj.type !== 'task') return invalidInput(`${id} is not a task`)
@@ -1171,6 +1285,8 @@ async function executeToolCallUnsafe(
         const patch = resolved.patch
         const newTitle = 'title' in input ? readString(input['title']) : undefined
         if ('title' in input && !newTitle) return invalidInput('Task title cannot be empty')
+        // #51: checked just before the first write; the title write is also guarded by AuroraCloud.
+        const objectUpdatedAt = expectedUpdatedAt === undefined ? undefined : await assertObjectRevision(id, workspaceId, expectedUpdatedAt)
 
         // Properties first: updateTaskProps refuses (e.g. encrypted labels)
         // before writing anything, and then the title is left unchanged too.
@@ -1185,7 +1301,8 @@ async function executeToolCallUnsafe(
           if (patch.task_list_id !== undefined) changedFields.push('task_list')
         }
         if (newTitle) {
-          await updateObjectTitle(id, newTitle, workspaceId)
+          // Property writes do not move the object row, so the row checked above still guards the title.
+          await updateObjectTitle(id, newTitle, workspaceId, objectUpdatedAt === undefined ? {} : { expectedObjectUpdatedAt: objectUpdatedAt })
           changedFields.unshift('title')
         }
 
@@ -1228,6 +1345,9 @@ async function executeToolCallUnsafe(
       case 'update_object': {
         const id = readString(input['id'])
         if (!id) return invalidInput('Object ID is required')
+        const expectedUpdatedAt = readExpectedUpdatedAt(input)
+        if (isErrorResult(expectedUpdatedAt)) return expectedUpdatedAt
+        const dryRun = input['dry_run'] === true
 
         const obj = await getObject(id, workspaceId)
         if (!obj) return notFound(`Object ${id} not found in this workspace`)
@@ -1239,18 +1359,31 @@ async function executeToolCallUnsafe(
           const e2ee = await getObjectE2eeStatus(id, workspaceId)
           if (e2ee) return invalidInput('Object content is end-to-end encrypted and cannot be modified by the MCP server')
         }
+        const title = 'title' in input ? readString(input['title']) : undefined
+        if ('title' in input && !title) return invalidInput('Object title cannot be empty')
+        const text = hasContentUpdate ? readString(input['text'] ?? input['content']) : undefined
+        if (hasContentUpdate && !text) return invalidInput('Object content cannot be empty')
+
+        // The row the content write replaces is read before the check, so a later change fails its guard.
+        const contentRow = expectedUpdatedAt !== undefined && hasContentUpdate ? await readContentRow(id, workspaceId) : undefined
+        const objectUpdatedAt = expectedUpdatedAt === undefined ? undefined : await assertObjectRevision(id, workspaceId, expectedUpdatedAt)
+
+        if (dryRun) {
+          return {
+            type: 'dry_run',
+            id,
+            ...(title ? { title: { old: obj.title, new: title } } : {}),
+            ...(text ? { content: contentReplacementSummary(await getContentJson(id, workspaceId), text) } : {}),
+          }
+        }
 
         const changedFields: string[] = []
-        if ('title' in input) {
-          const title = readString(input['title'])
-          if (!title) return invalidInput('Object title cannot be empty')
-          await updateObjectTitle(id, title, workspaceId)
+        if (title) {
+          await updateObjectTitle(id, title, workspaceId, objectUpdatedAt === undefined ? {} : { expectedObjectUpdatedAt: objectUpdatedAt })
           changedFields.push('title')
         }
-        if (hasContentUpdate) {
-          const text = readString(input['text'] ?? input['content'])
-          if (!text) return invalidInput('Object content cannot be empty')
-          await setContent(id, workspaceId, textToTipTapDoc(text))
+        if (text) {
+          await setContent(id, workspaceId, textToTipTapDoc(text), contentRow === undefined ? {} : { expectedContent: contentRow })
           changedFields.push('content')
         }
 
@@ -1262,9 +1395,18 @@ async function executeToolCallUnsafe(
       case 'set_content': {
         const id = String(input['id'] ?? '')
         const text = String(input['text'] ?? '')
+        const expectedUpdatedAt = readExpectedUpdatedAt(input)
+        if (isErrorResult(expectedUpdatedAt)) return expectedUpdatedAt
+        const contentRow = expectedUpdatedAt !== undefined ? await readContentRow(id, workspaceId) : undefined
+        if (expectedUpdatedAt !== undefined) await assertObjectRevision(id, workspaceId, expectedUpdatedAt)
+        if (input['dry_run'] === true) {
+          const current = await getContentJson(id, workspaceId)
+          if (current === null && !await getObject(id, workspaceId)) return notFound(`Object ${id} not found in this workspace`)
+          return { type: 'dry_run', id, content: contentReplacementSummary(current, text) }
+        }
         // Build a minimal TipTap document from plain text
         const doc = textToTipTapDoc(text)
-        await setContent(id, workspaceId, doc)
+        await setContent(id, workspaceId, doc, contentRow === undefined ? {} : { expectedContent: contentRow })
         return { type: 'content_set', id }
       }
 
@@ -1313,7 +1455,12 @@ async function executeToolCallUnsafe(
         if (valueType === 'boolean' && parseBooleanValue(valueStr) === null) {
           return invalidInput(`value must be true/false/1/0/yes/no for value_type boolean (got "${valueStr}")`)
         }
-        await upsertProperty(objectId, workspaceId, key, valueType, valueStr)
+        const expectedUpdatedAt = readExpectedUpdatedAt(input)
+        if (isErrorResult(expectedUpdatedAt)) return expectedUpdatedAt
+        // The row this write replaces is read before the check, so a later change fails its guard.
+        const propertyRow = expectedUpdatedAt !== undefined ? await readPropertyRow(objectId, workspaceId, key) : undefined
+        if (expectedUpdatedAt !== undefined) await assertObjectRevision(objectId, workspaceId, expectedUpdatedAt)
+        await upsertProperty(objectId, workspaceId, key, valueType, valueStr, propertyRow === undefined ? {} : { expectedRow: propertyRow })
         return { type: 'property_set', objectId, key, value: valueStr }
       }
 
@@ -1496,6 +1643,18 @@ export function formatToolResult(result: ToolResult): string {
       return `Updated: "${result.title}" (${result.id})`
     case 'deleted':
       return `Deleted: ${result.id} (soft-deleted)`
+    case 'dry_run': {
+      const lines = [`Dry run for ${result.id}: nothing was written.`]
+      if (result.title) lines.push(`Title: "${result.title.old}" -> "${result.title.new}"`)
+      if (result.content) {
+        const c = result.content
+        lines.push(`Content: ${c.old_blocks} -> ${c.new_blocks} blocks, ${c.old_chars} -> ${c.new_chars} characters`)
+        for (const change of c.first_changed_lines) {
+          lines.push(`  line ${change.line}: ${JSON.stringify(change.old)} -> ${JSON.stringify(change.new)}`)
+        }
+      }
+      return lines.join('\n')
+    }
     case 'content_set':
       return `Content set on ${result.id}`
     case 'content_appended':

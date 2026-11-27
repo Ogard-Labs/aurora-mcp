@@ -26,7 +26,19 @@ export class ToolNotFoundError extends Error {
   }
 }
 
-const PUBLIC_ERROR_MESSAGES: Record<Exclude<ToolErrorCode, 'rate_limited'>, string> = {
+/**
+ * The object changed on AuroraCloud since the agent read it (#51): its
+ * `expected_updated_at` no longer matches, or AuroraCloud refused the write's
+ * `_expected_record`. Nothing was written by the step that raised it.
+ */
+export class ToolConflictError extends Error {
+  constructor(message: string, readonly currentUpdatedAt: string | null = null) {
+    super(message)
+    this.name = 'ToolConflictError'
+  }
+}
+
+const PUBLIC_ERROR_MESSAGES: Record<Exclude<ToolErrorCode, 'rate_limited' | 'conflict'>, string> = {
   invalid_input: 'AuroraCloud rejected the request.',
   authentication_failed: 'AuroraCloud authentication failed.',
   permission_denied: 'AuroraCloud denied access to this resource.',
@@ -73,7 +85,7 @@ export function startupAuthFailureMessage(error: unknown): string {
   return 'Aurora MCP authentication failed.'
 }
 
-function apiErrorCode(error: AuroraApiError): ToolErrorCode {
+function apiErrorCode(error: AuroraApiError): Exclude<ToolErrorCode, 'conflict'> {
   if (error.status === 0) return 'network_error'
   if (error.status === 400 || error.status === 422) return 'invalid_input'
   if (error.status === 401) return 'authentication_failed'
@@ -125,6 +137,16 @@ export function toSafeToolError(error: unknown): ToolErrorResult {
       code: 'invalid_input',
       message: error.message,
       retryable: false,
+    }
+  }
+
+  if (error instanceof ToolConflictError) {
+    return {
+      type: 'error',
+      code: 'conflict',
+      message: error.message,
+      retryable: false,
+      ...(error.currentUpdatedAt ? { current_updated_at: error.currentUpdatedAt } : {}),
     }
   }
 

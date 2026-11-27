@@ -19,12 +19,15 @@ export type ToolErrorCode =
   | 'rate_limited'
   | 'network_error'
   | 'server_error'
+  | 'conflict'
 
 export type ToolErrorResult = {
   type: 'error'
   code: ToolErrorCode
   message: string
   retryable: boolean
+  /** On `conflict` (#51): the object's `updated_at` now, to read again before retrying. */
+  current_updated_at?: string
 }
 
 export type GrantedWorkspace = {

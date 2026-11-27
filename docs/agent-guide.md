@@ -115,6 +115,12 @@ Writes should be narrow and traceable to current user intent:
 5. Read back or use the returned structured result to report what actually
    changed. Separate successful, skipped, blocked, and unavailable items.
 
+For a change to an existing page, pass the `updated_at` from `get_object` as
+`expected_updated_at`, and use `dry_run: true` to show the person a
+replacement before making it. A `conflict` error means someone changed the
+page after you read it: read it again and ask before retrying. Never retry a
+conflict with the new `current_updated_at` without reading the page again.
+
 `delete_object` is reversible soft deletion in Aurora, but agents should
 treat it as destructive and request confirmation for the exact object.
 `restore_object` is idempotent: it returns `changed: true` only when a trashed

@@ -68,7 +68,7 @@ including object lookup and startup membership verification.
 | `wiki_get_page` | Read one source; the client can omit full text from its result. | `read:objects`, `read:content` |
 | `wiki_related` | Find sources related to an object. | `read:objects`, `search` |
 | `wiki_recent` | List recently updated readable sources. | `read:objects` |
-| `get_object` | Return one object's metadata, stored properties, readable content, and explicit unavailable states for computed fields that require trusted local evaluation. | `read:objects`, `read:content` |
+| `get_object` | Return one object's metadata, stored properties, readable content, and explicit unavailable states for computed fields that require trusted local evaluation. Its `updated_at` is the revision to pass back as `expected_updated_at`. | `read:objects`, `read:content` |
 | `list_workspace_members` | List members and roles in the token workspace. | `read:objects` |
 | `list_task_lists` | List task lists (Aurora's `task_list` objects, plus lists not yet converted from the legacy table). End-to-end encrypted list names are counted, not shown. | `read:objects`, `read:tasks` |
 | `list_task_statuses` | Return the workspace's task statuses with their group (`todo`, `inProgress`, `done`), or Aurora's built-ins when the workspace's own cannot be read. | `read:objects`, `read:tasks` |
@@ -101,6 +101,23 @@ including object lookup and startup membership verification.
 | `set_property` | Set a generic object property. | `read:objects`, `write:objects` |
 | `delete_object` | Soft-delete an object to trash. | `read:objects`, `write:objects` |
 | `restore_object` | Restore a soft-deleted object; reports whether the state changed. | `read:objects`, `write:objects` |
+
+### Revisions and dry runs
+
+`update_object`, `set_content`, `set_property` and `update_task` accept an
+optional `expected_updated_at`: the `updated_at` that `get_object` returned.
+When the object or any of its properties changed since, the tool writes
+nothing and returns `{ "type": "error", "code": "conflict", "current_updated_at": … }`.
+Read the object again, show the person what changed, then retry with the new
+value. The content, title and property rows a guarded write replaces also
+carry AuroraCloud's `_expected_record` precondition, so a change that lands
+after the check is refused the same way. `update_task` checks its task fields
+(status, priority, due date and so on) before writing; only its title write is
+guarded row by row.
+
+`set_content` and `update_object` also accept `dry_run: true`. The result is
+`{ "type": "dry_run", … }` with the old and new title and a content summary
+(block and character counts, first changed lines). Nothing is written.
 
 ## Safer workflow recipes
 
