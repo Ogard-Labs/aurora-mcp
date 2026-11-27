@@ -781,7 +781,7 @@ const RESULT_SCHEMAS: Readonly<Record<string, JsonObjectSchema[]>> = {
         recurrence: nullableStringSchema,
         next_occurrence: {
           type: ['object', 'null'],
-          properties: { id: stringSchema, due_date: stringSchema },
+          properties: { id: stringSchema, due_date: nullableStringSchema },
           required: ['id', 'due_date'],
           additionalProperties: false,
         },

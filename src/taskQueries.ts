@@ -100,7 +100,8 @@ export function toTaskRow(
     id: task.id,
     title: shown(task.title, 'title', encrypted),
     status,
-    status_group: status ? taskStatusGroup(status, context.statuses) : null,
+    // No stored status is Aurora's to-do; an encrypted one is unknown.
+    status_group: encrypted.includes('status') ? null : taskStatusGroup(status, context.statuses),
     due_date: shown(task.due_date, 'due_date', encrypted),
     priority: shown(task.priority, 'priority', encrypted),
     task_list: taskListId ? { id: taskListId, name: list?.name ?? null } : null,
@@ -141,7 +142,10 @@ export function matchesTaskFilters(row: TaskRow, filters: TaskFilters, statuses:
   if (filters.dueBefore !== undefined && (due === null || due > filters.dueBefore)) return false
   if (filters.dueAfter !== undefined && (due === null || due < filters.dueAfter)) return false
   if (filters.overdue !== undefined) {
-    const overdue = due !== null && due < filters.today && !completed
+    const pastDue = due !== null && due < filters.today
+    // Past due with an encrypted status: whether it is done, and so overdue, is unknown.
+    if (pastDue && row.encrypted_fields?.includes('status')) return false
+    const overdue = pastDue && !completed
     if (overdue !== filters.overdue) return false
   }
   if (filters.recurring !== undefined && row.recurring !== filters.recurring) return false

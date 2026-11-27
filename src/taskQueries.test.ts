@@ -247,3 +247,49 @@ test('an encrypted due date matches no due-date filter, not even has_due_date fa
   }
   assert.equal(matchesTaskFilters(row, base, []), true, 'without a due-date filter the task is still listed')
 })
+
+test('a task with no status is in the to-do group, and an encrypted status is in none', async () => {
+  const { toTaskRow } = await import('./taskQueries.js')
+  const context = { statuses: [{ id: 'Todo', group: 'todo' as const }], lists: [], members: [] }
+  const bare = toTaskRow({ id: 't1', title: 'Send invoice', updated_at: null, status: null, due_date: null, priority: null, assignees: [], labels: [], description: null, task_list_id: null, recurrence: null } as never, context)
+  assert.equal(bare.status_group, 'todo')
+  assert.equal(matchesTaskFilters(bare, { statusGroup: 'todo', includeCompleted: false, today: '2026-07-10' }, context.statuses), true)
+  const sealed = toTaskRow({ id: 't2', title: 'Secret', updated_at: null, status: ENCRYPTED, due_date: null, priority: null, assignees: [], labels: [], description: null, task_list_id: null, recurrence: null } as never, context)
+  assert.equal(sealed.status_group, null)
+})
+
+test('a past-due task with an encrypted status matches neither overdue true nor overdue false', () => {
+  const row = { ...ROW, status: null, status_group: null, due_date: '2026-07-01', encrypted_fields: ['status'] }
+  const base = { includeCompleted: false, today: '2026-07-10' }
+  assert.equal(matchesTaskFilters(row, { ...base, overdue: true }, []), false)
+  assert.equal(matchesTaskFilters(row, { ...base, overdue: false }, []), false)
+  const future = { ...row, due_date: '2099-01-01' }
+  assert.equal(matchesTaskFilters(future, { ...base, overdue: false }, []), true, 'a future due date is not overdue whatever the status')
+})
+
+test('assignee "me" with an MCP client credential is refused plainly, without calling /auth/me', async () => {
+  await withFake(async (requests) => {
+    getAuroraClient().authStore.save('aur_mcp_client_test', null)
+    const result = await executeToolCall('list_tasks', { assignee: 'me' }, 'workspace-1') as unknown as Record<string, unknown>
+    assert.equal(result['code'], 'invalid_input', JSON.stringify(result))
+    assert.match(String(result['message']), /list_workspace_members/)
+    assert.equal(requests.some((request) => request.endsWith('/auth/me')), false)
+  })
+})
+
+test('get_task on a completed repeating task names the occurrence its completion created', async () => {
+  const marker = JSON.stringify({ id: 'task-chain-next', date: '2026-10-12', rule: 'FREQ=DAILY', fp: null, state: 'live' })
+  const added: Task[] = [
+    { id: 'task-chain-done', title: 'Water plants', updated_at: '2026-10-11T10:00:00.000Z', props: { status: 'Done', due_date: '2026-10-11', recurrence_next: marker } },
+    { id: 'task-chain-next', title: 'Water plants', updated_at: '2026-10-11T10:00:01.000Z', props: { status: 'Todo', due_date: '2026-10-12' } },
+  ]
+  TASKS.push(...added)
+  try {
+    await withFake(async () => {
+      const result = await executeToolCall('get_task', { id: 'task-chain-done' }, 'workspace-1') as unknown as { task: Record<string, unknown> }
+      assert.deepEqual(result.task['next_occurrence'], { id: 'task-chain-next', due_date: '2026-10-12' })
+    })
+  } finally {
+    TASKS.splice(TASKS.length - added.length, added.length)
+  }
+})

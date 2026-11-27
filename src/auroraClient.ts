@@ -286,11 +286,21 @@ function mapGrantedWorkspace(value: unknown): GrantedWorkspace {
   }
 }
 
-/** Get the authenticated user's ID from the auth store. */
-/** The user this server's credential acts as, for `assignee: "me"` (#50). */
+/**
+ * The user this server's credential acts as, for `assignee: "me"` (#50), or
+ * null when AuroraCloud does not say. An MCP client credential is refused by
+ * `/auth/me` (it is an identity route) and the granted-workspace list carries
+ * no user id, so with one this answers null without asking.
+ */
 export async function getAuthenticatedUserId(): Promise<string | null> {
+  if (usesMcpClientCredential() && !getAuroraClient().authStore.record?.['id']) return null
   await ensureAuthRecord()
   return getAuthUserId()
+}
+
+/** Whether this server authenticates with an MCP client credential (`aur_mcp_client_…`). */
+export function usesMcpClientCredential(): boolean {
+  return getAuroraClient().authStore.token.startsWith('aur_mcp_client_')
 }
 
 function getAuthUserId(): string | null {

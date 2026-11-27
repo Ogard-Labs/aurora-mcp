@@ -137,6 +137,12 @@ function readMarker(props: AuroraPropertyRecord[]): RecurrenceMarker | null {
   }
 }
 
+/** The occurrence a completion of this task created, from its live `recurrence_next` marker (#50), or null. */
+export function liveRecurrenceSuccessor(props: AuroraPropertyRecord[]): string | null {
+  const marker = readMarker(props)
+  return marker && typeof marker.id === 'string' && marker.id && marker.state !== 'undone' ? marker.id : null
+}
+
 /** Whether the source's `recurrence_next` marker already records this occurrence as made by a completion. */
 function markerNames(props: AuroraPropertyRecord[], successorId: string): boolean {
   const marker = readMarker(props)

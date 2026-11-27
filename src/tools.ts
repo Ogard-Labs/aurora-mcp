@@ -64,7 +64,7 @@ import {
   type TaskStatusSource,
   type WorkspaceTaskStatuses,
 } from './taskStatuses.js'
-import { advanceRecurrenceChain, nextRecurrenceDue, recurrenceSuccessorId } from './taskRecurrence.js'
+import { advanceRecurrenceChain, nextRecurrenceDue, recurrenceSuccessorId, liveRecurrenceSuccessor } from './taskRecurrence.js'
 import {
   decodeTaskCursor,
   encodeTaskCursor,
@@ -209,7 +209,7 @@ export type ToolResult =
       task: TaskRow & {
         description: string | null
         recurrence: string | null
-        next_occurrence: { id: string; due_date: string } | null
+        next_occurrence: { id: string; due_date: string | null } | null
       }
     }
   | { type: 'canvas'; canvas: McpCanvasReadResult }
@@ -1058,7 +1058,11 @@ async function executeToolCallUnsafe(
         }
         const assigneeQuery = readString(input['assignee'])
         if (assigneeQuery !== null) {
-          const id = assigneeQuery.trim().toLowerCase() === 'me' ? await getAuthenticatedUserId() : matchMember(assigneeQuery, members)?.id
+          const isMe = assigneeQuery.trim().toLowerCase() === 'me'
+          const id = isMe ? await getAuthenticatedUserId() : matchMember(assigneeQuery, members)?.id
+          if (!id && isMe) {
+            return invalidInput('AuroraCloud does not tell this server which member "me" is when it connects with an MCP client credential. Pass your name, email or id from list_workspace_members instead.')
+          }
           if (!id) return invalidInput(`Could not resolve assignee: ${assigneeQuery}`)
           filters.assigneeId = id
         }
@@ -1114,9 +1118,21 @@ async function executeToolCallUnsafe(
         const description = taskProps.description && isEncryptedMetadataValue(taskProps.description) ? null : taskProps.description
         if (description === null && taskProps.description) encrypted.push('description')
         const readableRule = recurrence && !isEncryptedMetadataValue(recurrence) ? recurrence : null
-        const next = readableRule && !isCompletedTaskStatus(row.status, statuses.judged)
+        const completed = isCompletedTaskStatus(row.status, statuses.judged)
+        const next = readableRule && !completed
           ? nextRecurrenceDue(readableRule, row.due_date)
           : null
+        // A completed repeating task has lost its rule; the occurrence its
+        // completion created is named by its live marker. Shown while it exists.
+        let made: { id: string; due_date: string | null } | null = null
+        const successorId = completed ? liveRecurrenceSuccessor(props) : null
+        if (successorId) {
+          const successor = await getObject(successorId, workspaceId)
+          if (successor && !successor.is_deleted) {
+            const due = propsToTaskProps(await listProperties([successorId], workspaceId), successorId).due_date
+            made = { id: successorId, due_date: due && !isEncryptedMetadataValue(due) ? due : null }
+          }
+        }
         return {
           type: 'task',
           task: {
@@ -1124,7 +1140,7 @@ async function executeToolCallUnsafe(
             ...(encrypted.length ? { encrypted_fields: encrypted } : {}),
             description,
             recurrence: readableRule,
-            next_occurrence: next ? { id: recurrenceSuccessorId(id, next.date), due_date: next.dueDate } : null,
+            next_occurrence: next ? { id: recurrenceSuccessorId(id, next.date), due_date: next.dueDate } : made,
             // #51: the revision to pass back to update_task as expected_updated_at, as get_object's.
             updated_at: read.revision,
           },
