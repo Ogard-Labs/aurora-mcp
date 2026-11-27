@@ -35,6 +35,7 @@ function propertyRows(task: Task) {
     id: `${task.id}-p${index}`, object_id: task.id, workspace_id: 'workspace-1', key,
     value_type: key === 'due_date' ? 'date' : 'text', value_text: key === 'due_date' ? null : value,
     value_num: null, value_date: key === 'due_date' ? value : null, value_bool: null, value_ref: null,
+    updated_at: '2026-07-06T10:00:00.000Z',
   }))
 }
 
@@ -209,6 +210,8 @@ test('get_task returns every field and the next occurrence of a repeating task',
     const next = result.task['next_occurrence'] as { id: string; due_date: string }
     assert.match(next.due_date, /^\d{4}-\d{2}-\d{2}$/)
     assert.equal(next.id.length, 15)
+    // #51: the revision for update_task's expected_updated_at, as get_object's: the later of the row and its properties.
+    assert.equal(result.task['updated_at'], '2026-07-06T10:00:00.000Z')
   })
 })
 

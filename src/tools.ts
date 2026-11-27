@@ -46,6 +46,7 @@ import {
   createAuroraObjectFromTemplate,
 } from './auroraClient.js'
 import type {
+  AuroraObjectRecord,
   AuroraPropertyRecord,
   AuroraWorkspaceMember,
   AuroraTaskList,
@@ -445,6 +446,41 @@ async function runEditSteps(id: string, workspaceId: string, steps: Array<{ fiel
     for (const field of step.fields) progress.saved(field)
   }
   return saved
+}
+
+/**
+ * #51: reads an object's row, properties and (optionally) body so that the
+ * revision handed out matches what was read. The body and properties are read
+ * after the object row, so the row and the properties are read again
+ * afterwards: had either moved meanwhile (a rename or body save moves the row;
+ * a property save, possibly on another page of a long property list, moves
+ * only that property), the read starts over. The revision then never vouches
+ * for a value the caller was not shown.
+ */
+async function readConsistently(id: string, workspaceId: string, options: { content: boolean }): Promise<
+  | { obj: AuroraObjectRecord; properties: AuroraPropertyRecord[]; content: Awaited<ReturnType<typeof getContent>> | null; revision: string }
+  | 'not_found'
+  | 'unstable'
+> {
+  const snapshot = (rows: readonly AuroraPropertyRecord[]) => rows.map((row) => `${row.id}@${row.updated_at}`).sort().join('|')
+  let obj = await getObject(id, workspaceId)
+  if (!obj) return 'not_found'
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const content = options.content ? await getContent(id, workspaceId) : null
+    const properties = await listProperties([id], workspaceId)
+    const again = await getObject(id, workspaceId)
+    if (!again) return 'not_found'
+    const propertiesAgain = again.updated_at === obj.updated_at ? await listProperties([id], workspaceId) : null
+    if (propertiesAgain && snapshot(propertiesAgain) === snapshot(properties)) {
+      return { obj, properties, content, revision: objectRevision(obj.updated_at, properties) }
+    }
+    obj = again
+  }
+  return 'unstable'
+}
+
+function unstableRead(id: string): ToolErrorResult {
+  return { type: 'error', code: 'conflict', message: `Object ${id} kept changing on AuroraCloud while it was read. Try again.`, retryable: true }
 }
 
 /** `dry_run`, when given: absent or false writes; true previews; anything else (null too, as the schema is boolean) is refused before any read or write. */
@@ -922,32 +958,11 @@ async function executeToolCallUnsafe(
 
       case 'get_object': {
         const id = String(input['id'] ?? '')
-        let obj = await getObject(id, workspaceId)
-        if (!obj) return notFound(`Object ${id} not found in this workspace`)
-
-        // #51: the revision handed out must match what was read. The body and
-        // properties are read after the object row, so the row and the
-        // properties are read again afterwards: had either moved meanwhile (a
-        // rename or body save moves the row; a property save, possibly on
-        // another page of a long property list, moves only that property), the
-        // read starts over. The revision then never vouches for a value the
-        // caller was not shown.
-        const propertySnapshot = (rows: readonly AuroraPropertyRecord[]) =>
-          rows.map((row) => `${row.id}@${row.updated_at}`).sort().join('|')
-        let content: Awaited<ReturnType<typeof getContent>>
-        let rawProps: Awaited<ReturnType<typeof listProperties>>
-        for (let attempt = 1; ; attempt++) {
-          content = await getContent(id, workspaceId)
-          rawProps = await listProperties([id], workspaceId)
-          const again = await getObject(id, workspaceId)
-          if (!again) return notFound(`Object ${id} not found in this workspace`)
-          const propsAgain = again.updated_at === obj.updated_at ? await listProperties([id], workspaceId) : null
-          if (propsAgain && propertySnapshot(propsAgain) === propertySnapshot(rawProps)) break
-          obj = again
-          if (attempt >= 3) {
-            return { type: 'error', code: 'conflict', message: `Object ${id} kept changing on AuroraCloud while it was read. Try again.`, retryable: true }
-          }
-        }
+        const read = await readConsistently(id, workspaceId, { content: true })
+        if (read === 'not_found') return notFound(`Object ${id} not found in this workspace`)
+        if (read === 'unstable') return unstableRead(id)
+        const { obj, properties: rawProps } = read
+        const content = read.content!
         let schema: readonly unknown[] = []
         let computedPropertiesStatus: 'complete' | 'unavailable' = 'complete'
         if (obj.type.startsWith('custom:')) {
@@ -975,7 +990,7 @@ async function executeToolCallUnsafe(
           type: 'object',
           object: { id: obj.id, title: obj.title, type: obj.type, icon: obj.icon },
           // #51: pass this back as expected_updated_at so a write refuses if the object changed meanwhile.
-          updated_at: objectRevision(obj.updated_at, rawProps),
+          updated_at: read.revision,
           availability: content.availability,
           content: content.text,
           ...propertyResult,
@@ -1078,14 +1093,15 @@ async function executeToolCallUnsafe(
       case 'get_task': {
         const id = readString(input['id'])
         if (!id) return invalidInput('Task ID is required')
-        const [obj, props, statuses, snapshot, members] = await Promise.all([
-          getObject(id, workspaceId),
-          listProperties([id], workspaceId),
+        const [read, statuses, snapshot, members] = await Promise.all([
+          readConsistently(id, workspaceId, { content: false }),
           readWorkspaceTaskStatuses(workspaceId),
           readTaskLists(workspaceId),
           listMembers(workspaceId),
         ])
-        if (!obj) return notFound(`Task ${id} not found in this workspace`)
+        if (read === 'not_found') return notFound(`Task ${id} not found in this workspace`)
+        if (read === 'unstable') return unstableRead(id)
+        const { obj, properties: props } = read
         if (obj.type !== 'task') return invalidInput(`${id} is not a task`)
         const taskProps = propsToTaskProps(props, id)
         const recurrence = props.find((prop) => prop.key === 'recurrence')?.value_text || null
@@ -1108,6 +1124,8 @@ async function executeToolCallUnsafe(
             description,
             recurrence: readableRule,
             next_occurrence: next ? { id: recurrenceSuccessorId(id, next.date), due_date: next.dueDate } : null,
+            // #51: the revision to pass back to update_task as expected_updated_at, as get_object's.
+            updated_at: read.revision,
           },
         }
       }
