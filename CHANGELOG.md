@@ -6,6 +6,25 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- `list_tasks` and `get_task` (#50). `list_tasks` answers "what is overdue",
+  "what is assigned to me" or "what is in list Work" in one call: compact rows
+  with status and its group, due date, priority, task list and assignee names,
+  labels and whether the task repeats, filtered by status, status group, list,
+  assignee (`me` too), label, due dates, overdue, due-date presence and
+  recurrence, sorted and paged with a cursor tied to its query. Completed
+  tasks (a done-group status) are left out unless asked for. The number of
+  requests does not grow with the page size. `get_task` adds the description,
+  the recurrence rule and the next occurrence, and its `updated_at` is the
+  revision to pass to `update_task` as `expected_updated_at`. End-to-end
+  encrypted values are not shown; their fields are listed in
+  `encrypted_fields`. A completed repeating task still counts as repeating
+  and shows the rule it ran on; a reopened one does not, and `recurring` is
+  null when encryption hides the answer. A name two lists or two members
+  share is refused, here and in `create_task` and `update_task`; pass the id
+  or email. A list whose name is encrypted can be named
+  by its exact id. `me` needs a user session: with an MCP client credential,
+  pass your name, email or id.
+
 - Safe edits over a page someone else may be changing (#51). `get_object` now
   returns `updated_at`: the latest change time of the object and its
   properties. Pass it back as `expected_updated_at` to `update_object`,

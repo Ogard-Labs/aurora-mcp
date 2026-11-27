@@ -176,6 +176,17 @@ function statusKey(value: string): string {
 }
 
 /**
+ * The status a stored or requested value stands for: an old name the
+ * workspace renamed (an alias) stands for the status it became; otherwise the
+ * writable status it matches, or null.
+ */
+export function canonicalTaskStatus(raw: string, statuses: readonly TaskStatusDefinition[]): string | null {
+  const alias = statuses.find((status) => status.id === raw && status.aliasOf)
+  if (alias?.aliasOf) return alias.aliasOf
+  return matchTaskStatus(raw, statuses)
+}
+
+/**
  * The workspace status an agent meant: exact, then case- and spacing-
  * insensitive (so the old MCP spelling `To Do` still finds `Todo`). Null when
  * nothing matches.

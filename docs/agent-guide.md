@@ -33,7 +33,7 @@ template, Obsidian, and initialization-instruction support.
 | Discover access or capabilities | `list_workspaces`, `get_mcp_tool_coverage` | `get_mcp_workflow_recipes` | None |
 | Resume a project | `resume_project` prompt or `get_project_context` | `list_project_changes`, project-context resource | Read-only workflow |
 | Research workspace knowledge | `wiki_search` | `wiki_get_page`, `wiki_related`, `wiki_recent` | None |
-| Review work or plan a week | `list_task_lists`, `list_week_plan` | `list_task_statuses`, bounded object reads | Propose edits first |
+| Review work or plan a week | `list_tasks`, `get_task`, `list_task_lists`, `list_week_plan` | `list_task_statuses`, bounded object reads | Propose edits first |
 | Change tasks or objects | The matching read tool | `create_task`, `update_task`, `set_property`, content tools | Apply only the user-approved fields |
 | Design a custom database | `custom_database_design` prompt | recipes, types, templates, plan, apply | Exact approved plan ID and hash |
 | Reuse a template | `template_instantiation` prompt | `list_templates`, `create_from_template` | Confirm exact template and optional planned object ID |

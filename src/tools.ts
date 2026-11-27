@@ -31,6 +31,9 @@ import {
   listWorkspaceRecentKnowledgeServer,
   listWorkspaceRelatedKnowledgeServer,
   listPlanningTasks,
+  PLANNING_TASKS_MAX,
+  propsToTaskProps,
+  getAuthenticatedUserId,
   createPlanningTimeBlock,
   readCanvasContent,
   searchWorkspaceKnowledgeServer,
@@ -43,6 +46,7 @@ import {
   createAuroraObjectFromTemplate,
 } from './auroraClient.js'
 import type {
+  AuroraObjectRecord,
   AuroraPropertyRecord,
   AuroraWorkspaceMember,
   AuroraTaskList,
@@ -52,12 +56,27 @@ import type {
 import { buildWeekPlan, normalizeCanvasContent } from './planningTools.js'
 import {
   isCompletedTaskStatus,
+  isEncryptedMetadataValue,
+  isStatusGroup,
   matchTaskStatus,
+  canonicalTaskStatus,
   type TaskStatusGroup,
   type TaskStatusSource,
   type WorkspaceTaskStatuses,
 } from './taskStatuses.js'
-import { advanceRecurrenceChain } from './taskRecurrence.js'
+import { advanceRecurrenceChain, nextRecurrenceDue, recurrenceSuccessorId, liveRecurrenceSuccessor } from './taskRecurrence.js'
+import {
+  decodeTaskCursor,
+  encodeTaskCursor,
+  matchesTaskFilters,
+  readRecurrenceMarker,
+  sortTaskRows,
+  taskQueryFingerprint,
+  toTaskRow,
+  type TaskFilters,
+  type TaskRow,
+  type TaskSort,
+} from './taskQueries.js'
 import type { McpCanvasReadResult, McpWeekPlan } from './planningTools.js'
 import { getMcpToolCoverageAudit, getMcpWorkflowRecipes } from './toolCatalog.js'
 import type { McpToolCoverageAudit, McpWorkflowRecipe } from './toolCatalog.js'
@@ -177,6 +196,23 @@ export type ToolResult =
   | { type: 'obsidian_import_batch'; result: ObsidianImportBatchResult }
   | { type: 'obsidian_import_status'; status: ObsidianImportStatus }
   | { type: 'week_plan'; plan: McpWeekPlan }
+  | {
+      /** #50: one page of tasks matching the filters. */
+      type: 'tasks'
+      tasks: TaskRow[]
+      next_cursor: string | null
+      /** Matching tasks across all pages. */
+      total: number
+      note?: string
+    }
+  | {
+      type: 'task'
+      task: TaskRow & {
+        description: string | null
+        recurrence: string | null
+        next_occurrence: { id: string; due_date: string | null } | null
+      }
+    }
   | { type: 'canvas'; canvas: McpCanvasReadResult }
   | { type: 'scheduled_task_block'; id: string; title: string | null; due_date: string; mode: string }
   | { type: 'members'; members: { id: string; name: string | null; email: string; role: string }[] }
@@ -412,6 +448,41 @@ async function runEditSteps(id: string, workspaceId: string, steps: Array<{ fiel
     for (const field of step.fields) progress.saved(field)
   }
   return saved
+}
+
+/**
+ * #51: reads an object's row, properties and (optionally) body so that the
+ * revision handed out matches what was read. The body and properties are read
+ * after the object row, so the row and the properties are read again
+ * afterwards: had either moved meanwhile (a rename or body save moves the row;
+ * a property save, possibly on another page of a long property list, moves
+ * only that property), the read starts over. The revision then never vouches
+ * for a value the caller was not shown.
+ */
+async function readConsistently(id: string, workspaceId: string, options: { content: boolean }): Promise<
+  | { obj: AuroraObjectRecord; properties: AuroraPropertyRecord[]; content: Awaited<ReturnType<typeof getContent>> | null; revision: string }
+  | 'not_found'
+  | 'unstable'
+> {
+  const snapshot = (rows: readonly AuroraPropertyRecord[]) => rows.map((row) => `${row.id}@${row.updated_at}`).sort().join('|')
+  let obj = await getObject(id, workspaceId)
+  if (!obj) return 'not_found'
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const content = options.content ? await getContent(id, workspaceId) : null
+    const properties = await listProperties([id], workspaceId)
+    const again = await getObject(id, workspaceId)
+    if (!again) return 'not_found'
+    const propertiesAgain = again.updated_at === obj.updated_at ? await listProperties([id], workspaceId) : null
+    if (propertiesAgain && snapshot(propertiesAgain) === snapshot(properties)) {
+      return { obj, properties, content, revision: objectRevision(obj.updated_at, properties) }
+    }
+    obj = again
+  }
+  return 'unstable'
+}
+
+function unstableRead(id: string): ToolErrorResult {
+  return { type: 'error', code: 'conflict', message: `Object ${id} kept changing on AuroraCloud while it was read. Try again.`, retryable: true }
 }
 
 /** `dry_run`, when given: absent or false writes; true previews; anything else (null too, as the schema is boolean) is refused before any read or write. */
@@ -677,11 +748,22 @@ function buildWeekPlanningTimeBlockTaskInput(input: {
   }
 }
 
+function markerRule(raw: string | null): string | null {
+  const marker = readRecurrenceMarker(raw)
+  return marker.state === 'live' ? marker.rule : null
+}
+
+
 function matchTaskList(query: string, lists: AuroraTaskList[]): AuroraTaskList | null {
   const q = query.trim().toLowerCase()
   if (!q) return null
-  const exact = lists.find((l) => l.id.toLowerCase() === q || l.name.trim().toLowerCase() === q)
-  if (exact) return exact
+  const byId = lists.find((l) => l.id.toLowerCase() === q)
+  if (byId) return byId
+  const exact = lists.filter((l) => l.name.trim().toLowerCase() === q)
+  if (exact.length > 1) {
+    throw new ToolInputError(`${exact.length} task lists are named "${query.trim()}". Pass the list's id from list_task_lists instead.`)
+  }
+  if (exact.length === 1) return exact[0]
   const partial = lists.filter((l) => l.name.toLowerCase().includes(q))
   return partial.length === 1 ? partial[0] : null
 }
@@ -689,13 +771,17 @@ function matchTaskList(query: string, lists: AuroraTaskList[]): AuroraTaskList |
 function matchMember(query: string, members: AuroraWorkspaceMember[]): AuroraWorkspaceMember | null {
   const q = query.trim().toLowerCase()
   if (!q) return null
-  const exact = members.find((m) => {
+  const byIdOrEmail = members.find((m) => m.id.toLowerCase() === q || m.email.trim().toLowerCase() === q)
+  if (byIdOrEmail) return byIdOrEmail
+  const exact = members.filter((m) => {
     const name = m.name?.trim().toLowerCase() ?? ''
-    const email = m.email.trim().toLowerCase()
-    const local = email.split('@')[0] ?? ''
-    return m.id.toLowerCase() === q || email === q || local === q || name === q
+    const local = m.email.trim().toLowerCase().split('@')[0] ?? ''
+    return local === q || name === q
   })
-  if (exact) return exact
+  if (exact.length > 1) {
+    throw new ToolInputError(`${exact.length} workspace members match "${query.trim()}". Pass the member's email or id from list_workspace_members instead.`)
+  }
+  if (exact.length === 1) return exact[0]
   const partial = members.filter((m) => {
     const name = m.name?.trim().toLowerCase() ?? ''
     const email = m.email.trim().toLowerCase()
@@ -889,32 +975,11 @@ async function executeToolCallUnsafe(
 
       case 'get_object': {
         const id = String(input['id'] ?? '')
-        let obj = await getObject(id, workspaceId)
-        if (!obj) return notFound(`Object ${id} not found in this workspace`)
-
-        // #51: the revision handed out must match what was read. The body and
-        // properties are read after the object row, so the row and the
-        // properties are read again afterwards: had either moved meanwhile (a
-        // rename or body save moves the row; a property save, possibly on
-        // another page of a long property list, moves only that property), the
-        // read starts over. The revision then never vouches for a value the
-        // caller was not shown.
-        const propertySnapshot = (rows: readonly AuroraPropertyRecord[]) =>
-          rows.map((row) => `${row.id}@${row.updated_at}`).sort().join('|')
-        let content: Awaited<ReturnType<typeof getContent>>
-        let rawProps: Awaited<ReturnType<typeof listProperties>>
-        for (let attempt = 1; ; attempt++) {
-          content = await getContent(id, workspaceId)
-          rawProps = await listProperties([id], workspaceId)
-          const again = await getObject(id, workspaceId)
-          if (!again) return notFound(`Object ${id} not found in this workspace`)
-          const propsAgain = again.updated_at === obj.updated_at ? await listProperties([id], workspaceId) : null
-          if (propsAgain && propertySnapshot(propsAgain) === propertySnapshot(rawProps)) break
-          obj = again
-          if (attempt >= 3) {
-            return { type: 'error', code: 'conflict', message: `Object ${id} kept changing on AuroraCloud while it was read. Try again.`, retryable: true }
-          }
-        }
+        const read = await readConsistently(id, workspaceId, { content: true })
+        if (read === 'not_found') return notFound(`Object ${id} not found in this workspace`)
+        if (read === 'unstable') return unstableRead(id)
+        const { obj, properties: rawProps } = read
+        const content = read.content!
         let schema: readonly unknown[] = []
         let computedPropertiesStatus: 'complete' | 'unavailable' = 'complete'
         if (obj.type.startsWith('custom:')) {
@@ -942,7 +1007,7 @@ async function executeToolCallUnsafe(
           type: 'object',
           object: { id: obj.id, title: obj.title, type: obj.type, icon: obj.icon },
           // #51: pass this back as expected_updated_at so a write refuses if the object changed meanwhile.
-          updated_at: objectRevision(obj.updated_at, rawProps),
+          updated_at: read.revision,
           availability: content.availability,
           content: content.text,
           ...propertyResult,
@@ -965,6 +1030,148 @@ async function executeToolCallUnsafe(
                 note: `${snapshot.encryptedCount} task list(s) in this workspace are end-to-end encrypted. Their names cannot be read by the MCP server; open Aurora to see them.`,
               }
             : {}),
+        }
+      }
+
+      case 'list_tasks': {
+        const limit = readBoundedInteger(input, 'limit', { defaultValue: 25, min: 1, max: 100 })
+        if (!limit.ok) return invalidInput(limit.message)
+        const sortRaw = readString(input['sort']) ?? 'due_date'
+        if (sortRaw !== 'due_date' && sortRaw !== 'updated_at' && sortRaw !== 'priority') {
+          return invalidInput('sort must be one of: due_date, updated_at, priority')
+        }
+        const sort: TaskSort = sortRaw
+        const statusGroupRaw = readString(input['status_group'])
+        if (statusGroupRaw !== null && !isStatusGroup(statusGroupRaw)) return invalidInput('status_group must be one of: todo, inProgress, done')
+        for (const key of ['due_before', 'due_after'] as const) {
+          const value = readString(input[key])
+          if (value !== null && !isDateKey(value)) return invalidInput(`${key} must be a valid date formatted YYYY-MM-DD`)
+        }
+        for (const key of ['overdue', 'has_due_date', 'recurring', 'include_completed'] as const) {
+          if (input[key] !== undefined && typeof input[key] !== 'boolean') return invalidInput(`${key} must be true or false`)
+        }
+        const fingerprint = taskQueryFingerprint(input)
+        const cursorRaw = readString(input['cursor'])
+        const offset = cursorRaw === null ? 0 : decodeTaskCursor(cursorRaw, fingerprint)
+        if (offset === null) return invalidInput('cursor is not valid for this query. Start again without a cursor.')
+
+        // A bounded number of requests whatever the page size: one task read, batched properties, statuses, lists, members.
+        const [tasks, statuses, snapshot, members] = await Promise.all([
+          listPlanningTasks(workspaceId),
+          readWorkspaceTaskStatuses(workspaceId),
+          readTaskLists(workspaceId),
+          listMembers(workspaceId),
+        ])
+        const filters: TaskFilters = { includeCompleted: input['include_completed'] === true, today: todayDateKey() }
+        const statusRaw = readString(input['status'])
+        if (statusRaw !== null) filters.statuses = new Set([resolveStatus(statusRaw, statuses)])
+        if (statusGroupRaw !== null) filters.statusGroup = statusGroupRaw as TaskFilters['statusGroup']
+        const listQuery = readString(input['task_list'])
+        if (listQuery !== null) {
+          // An id outranks any name: a list whose name is encrypted is found by its exact id first.
+          const sealedId = snapshot.encryptedNameIds.find((id) => id === listQuery.trim()) ?? null
+          const match = sealedId ? null : matchTaskList(listQuery, snapshot.lists)
+          if (!match && !sealedId) {
+            return invalidInput(snapshot.encryptedCount > 0
+              ? `Could not resolve task list: ${listQuery}. ${snapshot.encryptedCount} task list(s) have encrypted names; pass such a list by its exact id.`
+              : `Could not resolve task list: ${listQuery}`)
+          }
+          filters.taskListId = match?.id ?? sealedId!
+        }
+        const assigneeQuery = readString(input['assignee'])
+        if (assigneeQuery !== null) {
+          const isMe = assigneeQuery.trim().toLowerCase() === 'me'
+          const id = isMe ? await getAuthenticatedUserId() : matchMember(assigneeQuery, members)?.id
+          if (!id && isMe) {
+            return invalidInput('AuroraCloud does not tell this server which member "me" is when it connects with an MCP client credential. Pass your name, email or id from list_workspace_members instead.')
+          }
+          if (!id) return invalidInput(`Could not resolve assignee: ${assigneeQuery}`)
+          filters.assigneeId = id
+        }
+        const label = readString(input['label'])
+        if (label !== null) filters.label = label
+        const dueBefore = readString(input['due_before'])
+        if (dueBefore !== null) filters.dueBefore = dueBefore
+        const dueAfter = readString(input['due_after'])
+        if (dueAfter !== null) filters.dueAfter = dueAfter
+        if (typeof input['overdue'] === 'boolean') filters.overdue = input['overdue']
+        if (typeof input['has_due_date'] === 'boolean') filters.hasDueDate = input['has_due_date']
+        if (typeof input['recurring'] === 'boolean') filters.recurring = input['recurring']
+
+        const context = { statuses: statuses.judged, lists: snapshot.lists, members }
+        const matching = sortTaskRows(
+          tasks.map((task) => toTaskRow(task, context)).filter((row) => matchesTaskFilters(row, filters, statuses.judged)),
+          sort,
+        )
+        const page = matching.slice(offset, offset + limit.value)
+        const nextOffset = offset + page.length
+        const notes: string[] = []
+        if (tasks.length >= PLANNING_TASKS_MAX) notes.push(`Only the ${PLANNING_TASKS_MAX} most recently updated tasks are searched.`)
+        if (matching.some((row) => row.encrypted_fields?.length)) notes.push('Some values are end-to-end encrypted and are not shown (see encrypted_fields). Filters never match them.')
+        return {
+          type: 'tasks',
+          tasks: page,
+          next_cursor: nextOffset < matching.length ? encodeTaskCursor(nextOffset, fingerprint) : null,
+          total: matching.length,
+          ...(notes.length ? { note: notes.join(' ') } : {}),
+        }
+      }
+
+      case 'get_task': {
+        const id = readString(input['id'])
+        if (!id) return invalidInput('Task ID is required')
+        const [read, statuses, snapshot, members] = await Promise.all([
+          readConsistently(id, workspaceId, { content: false }),
+          readWorkspaceTaskStatuses(workspaceId),
+          readTaskLists(workspaceId),
+          listMembers(workspaceId),
+        ])
+        if (read === 'not_found') return notFound(`Task ${id} not found in this workspace`)
+        if (read === 'unstable') return unstableRead(id)
+        const { obj, properties: props } = read
+        if (obj.type !== 'task') return invalidInput(`${id} is not a task`)
+        const taskProps = propsToTaskProps(props, id)
+        const recurrence = props.find((prop) => prop.key === 'recurrence')?.value_text || null
+        const recurrenceNext = props.find((prop) => prop.key === 'recurrence_next')?.value_text || null
+        const row = toTaskRow(
+          { id, title: obj.title, updated_at: obj.updated_at, ...taskProps, recurrence, recurrence_next: recurrenceNext },
+          { statuses: statuses.judged, lists: snapshot.lists, members },
+        )
+        const encrypted = [...(row.encrypted_fields ?? [])]
+        const description = taskProps.description && isEncryptedMetadataValue(taskProps.description) ? null : taskProps.description
+        if (description === null && taskProps.description) encrypted.push('description')
+        const readableRule = recurrence && !isEncryptedMetadataValue(recurrence) ? recurrence : null
+        const completed = isCompletedTaskStatus(row.status, statuses.judged)
+        // The forecast is anchored on the due date and only holds for an open
+        // task: with either of them encrypted it is unknown, so none is given.
+        const anchorHidden = encrypted.includes('due_date') || encrypted.includes('status')
+        const next = readableRule && !completed && !anchorHidden
+          ? nextRecurrenceDue(readableRule, row.due_date)
+          : null
+        // A completed repeating task has lost its rule; the occurrence its
+        // completion created is named by its live marker. Shown while it exists.
+        let made: { id: string; due_date: string | null } | null = null
+        const successorId = completed ? liveRecurrenceSuccessor(props) : null
+        if (successorId) {
+          const successor = await getObject(successorId, workspaceId)
+          if (successor && !successor.is_deleted) {
+            const due = propsToTaskProps(await listProperties([successorId], workspaceId), successorId).due_date
+            made = { id: successorId, due_date: due && !isEncryptedMetadataValue(due) ? due : null }
+          }
+        }
+        return {
+          type: 'task',
+          task: {
+            ...row,
+            ...(encrypted.length ? { encrypted_fields: encrypted } : {}),
+            description,
+            // A completed repeating task shows the rule it ran on, kept in its marker;
+            // that rule never drives a forecast here.
+            recurrence: readableRule ?? (completed ? markerRule(recurrenceNext) : null),
+            next_occurrence: next ? { id: recurrenceSuccessorId(id, next.date), due_date: next.dueDate } : made,
+            // #51: the revision to pass back to update_task as expected_updated_at, as get_object's.
+            updated_at: read.revision,
+          },
         }
       }
 
@@ -1710,7 +1917,7 @@ const TASK_STATUS_SOURCE_NOTES: Record<TaskStatusSource, string | null> = {
 }
 
 function resolveStatus(raw: string, statuses: WorkspaceTaskStatuses): string {
-  const match = matchTaskStatus(raw, statuses.statuses)
+  const match = matchTaskStatus(raw, statuses.statuses) ?? canonicalTaskStatus(raw, statuses.judged)
   if (match) return match
   // Statuses this server cannot read (encrypted or newer format) may still exist: pass the value through.
   if (statuses.source === 'encrypted' || statuses.source === 'unsupported') return raw
@@ -1728,6 +1935,19 @@ function textToTipTapDoc(text: string): Record<string, unknown> {
 }
 
 // ── Format result for MCP text response ──────────────────────────────────────
+
+function formatTaskRow(task: TaskRow): string {
+  const parts = [`- ${task.title ?? '(Untitled)'} (${task.id})`]
+  if (task.status) parts.push(`status ${task.status}`)
+  if (task.due_date) parts.push(`due ${task.due_date}`)
+  if (task.priority) parts.push(`priority ${task.priority}`)
+  if (task.task_list) parts.push(`list ${task.task_list.name ?? task.task_list.id}`)
+  if (task.assignees.length) parts.push(`assigned ${task.assignees.map((a) => a.name ?? a.id).join(', ')}`)
+  if (task.labels.length) parts.push(`labels ${task.labels.join(', ')}`)
+  if (task.recurring) parts.push('repeats')
+  if (task.encrypted_fields?.length) parts.push(`encrypted: ${task.encrypted_fields.join(', ')}`)
+  return parts.join(' · ')
+}
 
 export function formatToolResult(result: ToolResult): string {
   switch (result.type) {
@@ -1782,6 +2002,21 @@ export function formatToolResult(result: ToolResult): string {
       return `Updated: "${result.title}" (${result.id})`
     case 'deleted':
       return `Deleted: ${result.id} (soft-deleted)`
+    case 'tasks': {
+      if (!result.tasks.length) return result.note ? `No tasks found. ${result.note}` : 'No tasks found.'
+      const lines = result.tasks.map(formatTaskRow)
+      lines.push(`${result.tasks.length} of ${result.total} matching task(s).${result.next_cursor ? ` More: cursor ${result.next_cursor}` : ''}`)
+      if (result.note) lines.push(`Note: ${result.note}`)
+      return lines.join('\n')
+    }
+    case 'task': {
+      const task = result.task
+      const lines = [formatTaskRow(task)]
+      if (task.description) lines.push(`Description: ${task.description}`)
+      if (task.recurrence) lines.push(`Repeats: ${task.recurrence}`)
+      if (task.next_occurrence) lines.push(`Next occurrence: ${task.next_occurrence.due_date} (${task.next_occurrence.id})`)
+      return lines.join('\n')
+    }
     case 'dry_run': {
       const lines = [`Dry run for ${result.id}: nothing was written.`]
       if (result.title) lines.push(`Title: "${result.title.old}" -> "${result.title.new}"`)
