@@ -10,8 +10,12 @@ All notable changes to this project are documented in this file.
   (#51). `set_content`, `update_object`, `update_object_title`,
   `set_property`, `update_task` and `schedule_task_block` are marked
   destructive, as `delete_object` already was, so clients that confirm
-  destructive calls ask before they run. Additive tools (creates, appends,
-  restores, additive schema updates and the Obsidian import) are not.
+  destructive calls ask before they run. So are `create_template`,
+  `create_from_template`, `update_object_type` and
+  `apply_custom_database_plan`, which rewrite an existing template, object or
+  type when given an ID that already exists. Tools that only add
+  (`create_object`, `create_task`, `append_block`, `restore_object` and the
+  Obsidian import) are not.
 - `openWorldHint` is now `false` for every tool: each one works on the
   person's own Aurora workspace or local vault, not the open web.
 

@@ -127,10 +127,12 @@ as execution constraints, not suggestions.
 Tool annotations mark every tool that replaces or removes data with
 `destructiveHint: true`: `set_content`, `update_object`, `update_object_title`,
 `set_property`, `update_task`, `schedule_task_block` and `delete_object`.
+`create_template`, `create_from_template`, `update_object_type` and
+`apply_custom_database_plan` are marked destructive too: a reused object ID
+rewrites an existing template, object or type's name, icon and colour.
 Clients that confirm destructive calls ask before these run. Tools that only add
-(creates, `append_block`, `restore_object`, `update_object_type`,
-`apply_custom_database_plan`, `import_obsidian_vault`) are not marked
-destructive. `openWorldHint` is `false` for every tool, since each one works on
+(`create_object`, `create_task`, `append_block`, `restore_object`,
+`import_obsidian_vault`) are not marked destructive. `openWorldHint` is `false` for every tool, since each one works on
 the person's own workspace or local vault.
 
 `delete_object` is a write operation even though Aurora uses reversible

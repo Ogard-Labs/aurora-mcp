@@ -246,6 +246,7 @@ test('every tool declares output schema and accurate effect annotations', () => 
   // #51: the tools that replace or remove existing data; additive tools are not destructive.
   const destructiveTools = new Set([
     'delete_object', 'set_content', 'update_object', 'update_object_title', 'set_property', 'update_task', 'schedule_task_block',
+    'create_template', 'create_from_template', 'update_object_type', 'apply_custom_database_plan',
   ])
   const nonIdempotentTools = new Set(['schedule_task_block', 'create_object', 'create_task', 'append_block', 'create_template', 'create_from_template', 'import_obsidian_vault'])
   const successResultTypes: Record<string, string[]> = {
