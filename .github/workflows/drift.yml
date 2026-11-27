@@ -1,13 +1,12 @@
 name: AuroraCloud drift
 
-# Weekly, and on demand: checks that every AuroraCloud data shape this server
-# relies on (src/auroraContract.ts) is still defined the same way in
-# Ogard-Labs/auroradocs, and runs the extended read-only live smoke (#49).
-# Failures open or update one "AuroraCloud drift detected" issue.
+# On demand only: runs the extended read-only live smoke (#49). Failures open
+# or update one "AuroraCloud drift detected" issue. The contract check
+# (src/auroraContract.ts against Ogard-Labs/auroradocs) runs by hand on a local
+# checkout, `pnpm drift --auroradocs <checkout>`, so this repository holds no
+# credential for the private auroradocs repository.
 
 on:
-  schedule:
-    - cron: '17 6 * * 1'
   workflow_dispatch:
 
 permissions:
@@ -40,46 +39,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # A GitHub App installed on Ogard-Labs/auroradocs with read-only Contents
-      # access. Its token lasts one hour and belongs to no person. If it or the
-      # checkout fails, the contract check is skipped and reported, and the live
-      # smoke still runs: one missing setting must not hide the other check.
-      - name: Get a read-only token for auroradocs
-        id: auroradocs-token
-        continue-on-error: true
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ vars.AURORADOCS_READER_APP_ID }}
-          private-key: ${{ secrets.AURORADOCS_READER_PRIVATE_KEY }}
-          owner: Ogard-Labs
-          repositories: auroradocs
-          permission-contents: read
-
-      - name: Check out auroradocs main, read-only
-        id: auroradocs-checkout
-        if: steps.auroradocs-token.outcome == 'success'
-        continue-on-error: true
-        uses: actions/checkout@v7
-        with:
-          repository: Ogard-Labs/auroradocs
-          ref: main
-          path: auroradocs
-          token: ${{ steps.auroradocs-token.outputs.token }}
-          persist-credentials: false
-          sparse-checkout: |
-            packages/core/src/lib
-            apps/api/src
-            package.json
-          sparse-checkout-cone-mode: true
-
-      - name: Check the AuroraCloud contract
-        id: contract
-        if: steps.auroradocs-checkout.outcome == 'success'
-        continue-on-error: true
-        run: |
-          set -o pipefail
-          node --import tsx scripts/auroraDrift.mjs --auroradocs auroradocs | tee drift-report.txt
-
       - name: Run the extended read-only live smoke
         id: smoke
         continue-on-error: true
@@ -94,11 +53,7 @@ jobs:
           AURORA_SMOKE_EXTENDED: '1'
 
       - name: Open or update the drift issue
-        if: >-
-          steps.auroradocs-token.outcome == 'failure'
-          || steps.auroradocs-checkout.outcome == 'failure'
-          || steps.contract.outcome == 'failure'
-          || steps.smoke.outcome == 'failure'
+        if: steps.smoke.outcome == 'failure'
         uses: actions/github-script@v8
         with:
           script: |
@@ -112,16 +67,9 @@ jobs:
             const smokeLines = read('smoke-report.txt').split('\n')
               .filter((line) => /^(AuroraCloud MCP live smoke|Live smoke tool|AURORA_[A-Z_]+ )/.test(line))
             const smoke = smokeLines.length ? smokeLines.slice(-5).join('\n') : '(no summary line; see the run log)'
-            const tokenOutcome = '${{ steps.auroradocs-token.outcome }}'
-            const checkoutOutcome = '${{ steps.auroradocs-checkout.outcome }}'
-            const contract = checkoutOutcome === 'success'
-              ? read('drift-report.txt')
-              : `Skipped: auroradocs could not be read (token ${tokenOutcome}, checkout ${checkoutOutcome || 'skipped'}). Check the AURORADOCS_READER_APP_ID variable, the AURORADOCS_READER_PRIVATE_KEY secret and the app's installation.`
             const body = [
-              `The scheduled drift check failed on ${new Date().toISOString().slice(0, 10)}. Run: ${run}`,
+              `The extended live smoke failed on ${new Date().toISOString().slice(0, 10)}. Run: ${run}`,
               '',
-              `**Contract check:** ${'${{ steps.contract.outcome }}' || 'skipped'}`,
-              '```', contract, '```',
               `**Extended live smoke:** ${'${{ steps.smoke.outcome }}'}`,
               '```', smoke, '```',
             ].join('\n')

@@ -47,7 +47,7 @@ export const LIVE_SMOKE_TOOL_NAMES = ['list_workspaces', 'get_project_context'] 
 /**
  * Read-only tools the extended smoke also calls (#49), each with the result
  * type that proves AuroraCloud still answers in the shape the server reads.
- * They run only with AURORA_SMOKE_EXTENDED=1, as the scheduled drift job does.
+ * They run only with AURORA_SMOKE_EXTENDED=1, as the on-demand drift workflow does.
  */
 export const EXTENDED_SMOKE_CHECKS = [
   { tool: 'list_task_lists', input: {}, resultType: 'task_lists' },
