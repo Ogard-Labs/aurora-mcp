@@ -242,3 +242,15 @@ test('a regular expression after a control-flow condition is not a comment (#49 
   assert.equal(stripComments('const r = (a) / 2 /* c */'), 'const r = (a) / 2        ')
   assert.equal(stripComments('const r = f(a) / g(b) // c'), 'const r = f(a) / g(b)     ')
 })
+
+test('a member named like a keyword does not start a regex (#49 review)', async () => {
+  const version = AURORA_CONTRACT.find((entry) => entry.id === 'task-status-config-version')
+  assert.ok(version)
+  const live = 'export const TASK_STATUS_CONFIG_VERSION = 2'
+  for (const call of ['calculator.with(x) / 2', 'a?.if(x) / 2', 'a.\n  for(x) / 2', 'obj.return / 2']) {
+    const text = `const half = ${call} /* ${version.source} */\n${live}\n`
+    assert.equal((await checkDrift([version], '/checkout', async () => text)).length, 1, call)
+  }
+  assert.equal(stripComments('if (a) /[/*]/.test(a)'), 'if (a) /[/*]/.test(a)')
+  assert.equal(stripComments('x = return_value / 2 // c'), 'x = return_value / 2     ')
+})

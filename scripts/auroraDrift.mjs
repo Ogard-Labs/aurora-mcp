@@ -21,6 +21,15 @@ export function collapse(text) {
 const WORD = /[A-Za-z0-9_$]/
 
 const REGEX_AFTER_WORD = /(?:^|[^A-Za-z0-9_$])(?:return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$/
+const CONTROL_BEFORE_PAREN = /(?:^|[^A-Za-z0-9_$])(?:if|while|for|with)\s*$/
+
+/** Whether `text` ends with a keyword `pattern` matches, and not a member name such as `a.with` or `a?.return`. */
+function endsWithKeyword(text, pattern) {
+  const match = pattern.exec(text)
+  if (!match) return false
+  const start = match.index + (/^[A-Za-z]/.test(match[0]) ? 0 : 1)
+  return !/\.\s*$/.test(text.slice(0, start))
+}
 
 /**
  * `source` with every comment blanked out: each comment character becomes a
@@ -55,7 +64,7 @@ export function stripComments(source) {
   const regexMayStart = () => {
     const before = out.replace(/\s+$/, '')
     if (!before) return true
-    if (/[A-Za-z0-9_$]$/.test(before)) return REGEX_AFTER_WORD.test(before)
+    if (/[A-Za-z0-9_$]$/.test(before)) return endsWithKeyword(before, REGEX_AFTER_WORD)
     if (before.endsWith(')')) return closedControl
     return /[(,=:[!&|?{};+\-*%<>~^]$/.test(before)
   }
@@ -91,7 +100,7 @@ export function stripComments(source) {
         interpolations[interpolations.length - 1] -= 1
       }
     } else if (char === '(') {
-      parens.push(/(?:^|[^A-Za-z0-9_$])(?:if|while|for|with)\s*$/.test(out))
+      parens.push(endsWithKeyword(out, CONTROL_BEFORE_PAREN))
       take(index + 1)
     } else if (char === ')') {
       closedControl = parens.pop() ?? false
