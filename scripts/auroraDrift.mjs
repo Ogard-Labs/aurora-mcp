@@ -291,7 +291,10 @@ export function findInCode(raw, needle, literal, statement = false) {
     const inCode = (!literal || literal[start] === 0) && literalsExact(raw, start, match[1].length, needle, literal)
     // An entry that is one whole string or template is an operand: the code after it must not go on with
     // the value (`'/route' + '/v2'` is another route).
-    const operandKept = !wholeLiteral(needle) || operandKeptAt(raw, start, match.index + match[0].length)
+    // A needle that only starts with a literal (`'/route'] as const`) fixes what follows it, so only the left side is open.
+    const operandKept = wholeLiteral(needle)
+      ? operandKeptAt(raw, start, match.index + match[0].length)
+      : !leadingLiteral(needle) || !joinsOperandBefore(skipLeftAssertions(raw.slice(0, start)))
     if (inCode && operandKept && !statement) return true
     const tail = /^(?:[ \t]|\/\*(?:[^*\n]|\*(?!\/))*\*\/)*(?:([;}])|(?:\/\/[^\n]*)?(?:\r?\n|$))/.exec(raw.slice(match.index + match[0].length))
     if (statement && inCode && operandKept && tail && (tail[1] || !continuesExpression(raw.slice(match.index + match[0].length + tail[0].length)))) return true
@@ -324,6 +327,17 @@ function literalsExact(raw, start, length, needle, literal) {
     }
   }
   return true
+}
+
+/** Whether `needle` starts with a whole string or template literal. */
+function leadingLiteral(needle) {
+  const quote = needle[0]
+  if (!`'"\``.includes(quote)) return false
+  for (let i = 1; i < needle.length; i += 1) {
+    if (needle[i] === '\\') i += 1
+    else if (needle[i] === quote) return true
+  }
+  return false
 }
 
 /** Whether `needle` is one string or template literal and nothing else. */

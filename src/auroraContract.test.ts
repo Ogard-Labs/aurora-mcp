@@ -429,3 +429,14 @@ test('a route string that is extended is drift (#49 review)', async () => {
     }
   }
 })
+
+test('a knowledge route that is prefixed inside its path array is drift (#49 review)', async () => {
+  const route = AURORA_CONTRACT.find((entry) => entry.id === 'route-knowledge-recent')
+  assert.ok(route)
+  const first = `'/knowledge/workspaces/:workspaceId/recent'`
+  for (const prefix of [`'/v2' + `, `'/v2' + <const>`, `base /* c */ + `]) {
+    const text = `const recentPaths = [${first}, ${prefix}${route.source}\n`
+    assert.equal((await checkDrift([route], '/checkout', async () => text)).length, 1, prefix)
+  }
+  assert.deepEqual(await checkDrift([route], '/checkout', async () => `const recentPaths = [${first}, ${route.source}\n`), [])
+})
