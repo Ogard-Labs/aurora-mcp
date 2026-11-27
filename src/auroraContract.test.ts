@@ -279,3 +279,13 @@ test('a Unicode name is read as one name (#49 review)', async () => {
   assert.equal(containsWhole('𝑥VERSION = 1', 'VERSION = 1'), false)
   assert.equal(containsWhole('VERSION = 1 ', 'VERSION = 1'), true)
 })
+
+test('a rejected match after an emoji does not stall the search (#49 review)', { timeout: 5000 }, async () => {
+  const version = AURORA_CONTRACT.find((entry) => entry.id === 'task-status-config-version')
+  assert.ok(version)
+  const stale = `const example = '📌${version.source}';\nexport const TASK_STATUS_CONFIG_VERSION = 2\n`
+  assert.equal((await checkDrift([version], '/checkout', async () => stale)).length, 1)
+  const live = `const example = '📌${version.source}';\n${version.source}\n`
+  assert.deepEqual(await checkDrift([version], '/checkout', async () => live), [])
+  assert.equal(endsLine(`'📌${version.source}'\n${version.source}\n`, version.source), true)
+})

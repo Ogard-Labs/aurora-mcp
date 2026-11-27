@@ -174,7 +174,8 @@ export function endsLine(raw, needle) {
   for (let match = pattern.exec(raw); match; match = pattern.exec(raw)) {
     const tail = /^(?:[ \t]|\/\*(?:[^*\n]|\*(?!\/))*\*\/)*(?:([;}])|(?:\/\/[^\n]*)?(?:\r?\n|$))/.exec(raw.slice(match.index + match[0].length))
     if (tail && (tail[1] || !continuesExpression(raw.slice(match.index + match[0].length + tail[0].length)))) return true
-    pattern.lastIndex = match.index + 1
+    // Step one whole code point, so a search never restarts inside a surrogate pair (which the `u` flag would read back to the same match).
+    pattern.lastIndex = match.index + String.fromCodePoint(raw.codePointAt(match.index)).length
   }
   return false
 }
