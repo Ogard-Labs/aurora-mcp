@@ -28,7 +28,9 @@ function endsWithKeyword(text, pattern) {
   const match = pattern.exec(text)
   if (!match) return false
   const start = match.index + (/^[A-Za-z]/.test(match[0]) ? 0 : 1)
-  return !/\.\s*$/.test(text.slice(0, start))
+  const head = text.slice(0, start)
+  // A `.` ends a number like `1.` too; only a `.` after a name or a closing bracket is member access.
+  return !/\.\s*$/.test(head) || /(?:^|[^A-Za-z0-9_$.])\d[\d_]*\.\s*$/.test(head)
 }
 
 /**

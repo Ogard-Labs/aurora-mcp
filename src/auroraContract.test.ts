@@ -254,3 +254,13 @@ test('a member named like a keyword does not start a regex (#49 review)', async 
   assert.equal(stripComments('if (a) /[/*]/.test(a)'), 'if (a) /[/*]/.test(a)')
   assert.equal(stripComments('x = return_value / 2 // c'), 'x = return_value / 2     ')
 })
+
+test('a keyword after a number ending in a dot is still a keyword (#49 review)', async () => {
+  const version = AURORA_CONTRACT.find((entry) => entry.id === 'task-status-config-version')
+  assert.ok(version)
+  const text = `function f() {\n  const fallback = 1.\n  return /[/*]/.test(x)\n}\n${version.source}\n`
+  assert.deepEqual(await checkDrift([version], '/checkout', async () => text), [])
+  // A name ending in a digit is still member access.
+  const member = `const half = x1.return / 2 /* ${version.source}; old */\nexport const TASK_STATUS_CONFIG_VERSION = 2\n`
+  assert.equal((await checkDrift([version], '/checkout', async () => member)).length, 1)
+})
