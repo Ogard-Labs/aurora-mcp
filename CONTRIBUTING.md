@@ -72,7 +72,9 @@ users together.
 `pnpm drift --auroradocs <checkout>` checks a read-only auroradocs checkout and
 names each entry that no longer matches. It is not part of `pnpm check`, which
 stays offline, and it runs by hand only: this public repository holds no
-credential for the private auroradocs repository. Run it before a release and
+credential for the private auroradocs repository. Run it on a checkout of the
+latest auroradocs `main` (`git -C <checkout> pull --ff-only origin main` first;
+an old checkout can pass while `main` has drifted), before each release and
 whenever auroradocs changes a task, status, object-type or knowledge shape.
 The `AuroraCloud drift` workflow runs the extended read-only live smoke on
 demand and opens or updates one "AuroraCloud drift detected" issue when it
