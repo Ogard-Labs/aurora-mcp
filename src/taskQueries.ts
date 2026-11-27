@@ -33,7 +33,8 @@ export type TaskRow = {
   task_list: { id: string; name: string | null } | null
   assignees: Array<{ id: string; name: string | null }>
   labels: string[]
-  recurring: boolean
+  /** Null when it cannot be told: no readable rule, and the marker or the status that would settle it is encrypted. */
+  recurring: boolean | null
   updated_at: string | null
   /** Fields whose stored value is end-to-end encrypted, so it is not shown. */
   encrypted_fields?: string[]
@@ -103,6 +104,25 @@ export function dueDateKey(value: string | null): string | null {
   return match ? match[1] : null
 }
 
+/**
+ * Whether a task repeats. An encrypted rule is still a rule. Completing a
+ * repeating task clears its rule and leaves a live marker, so a completed task
+ * with a live marker is part of a series; a reopened one is not, because
+ * completing it again makes no occurrence. Unknown is null.
+ */
+function recurringOf(
+  rule: string | null | undefined,
+  marker: ReturnType<typeof readRecurrenceMarker>,
+  status: string | null,
+  statusEncrypted: boolean,
+  statuses: readonly TaskStatusDefinition[],
+): boolean | null {
+  if (rule) return true
+  if (marker.state === 'none') return false
+  if (marker.state === 'encrypted' || statusEncrypted) return null
+  return isCompletedTaskStatus(status, statuses)
+}
+
 /** One task as a row, with names resolved and encrypted values withheld. */
 export function toTaskRow(
   task: AuroraPlanningTask,
@@ -129,13 +149,10 @@ export function toTaskRow(
     task_list: taskListId ? { id: taskListId, name: list?.name ?? null } : null,
     assignees: assigneeIds.map((id) => ({ id, name: context.members.find((member) => member.id === id)?.name ?? null })),
     labels: shownList(task.labels, 'labels', encrypted),
-    // An encrypted rule is still a rule: the task repeats, though its schedule is
-    // not shown. A completed repeating task has no rule but a live marker.
-    recurring: Boolean(task.recurrence) || marker.state === 'live',
+    recurring: recurringOf(task.recurrence, marker, status, encrypted.includes('status'), context.statuses),
     updated_at: task.updated_at,
   }
   if (isEncryptedMetadataValue(task.recurrence) && !encrypted.includes('recurrence')) encrypted.push('recurrence')
-  // With no rule and a sealed marker, whether the task belongs to a series is unknown.
   if (!task.recurrence && marker.state === 'encrypted') encrypted.push('recurrence_next')
   if (encrypted.length) row.encrypted_fields = encrypted
   return row
@@ -173,10 +190,8 @@ export function matchesTaskFilters(row: TaskRow, filters: TaskFilters, statuses:
     const overdue = pastDue && !completed
     if (overdue !== filters.overdue) return false
   }
-  if (filters.recurring !== undefined) {
-    if (!row.recurring && row.encrypted_fields?.includes('recurrence_next')) return false
-    if (row.recurring !== filters.recurring) return false
-  }
+  // Unknown (null) matches neither true nor false.
+  if (filters.recurring !== undefined && row.recurring !== filters.recurring) return false
   return true
 }
 

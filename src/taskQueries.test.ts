@@ -56,6 +56,9 @@ const LIST_ID_PROPS = [
   { id: 'lp-2', object_id: 'list-obj-home', workspace_id: 'workspace-1', key: 'list_id', value_type: 'text', value_text: 'list-home', value_num: null, value_date: null, value_bool: null, value_ref: null },
 ]
 
+/** Rows in the retired task_lists table (served only while non-empty; otherwise the table is gone). */
+const LEGACY_LISTS: Array<{ id: string; name: string; default_status: string | null }> = []
+
 const MEMBERS = [
   { userId: 'user-1', name: 'Ada Lovelace', email: 'ada@example.com', role: 'owner' },
   { userId: 'user-2', name: 'Grace Hopper', email: 'grace@example.com', role: 'editor' },
@@ -90,6 +93,7 @@ function handler(requests: string[]) {
       return
     }
     if (url.pathname === '/api/collections/task_lists/records') {
+      if (LEGACY_LISTS.length) { res.end(list(LEGACY_LISTS)); return }
       res.statusCode = 410
       res.end(JSON.stringify({ error: 'gone' }))
       return
@@ -329,7 +333,7 @@ test('get_task gives no forecast when the due date or status it depends on is en
   }
 })
 
-test('an undone marker does not make a task recurring, and a sealed marker matches no recurring filter', () => {
+test('an undone marker or a reopened task is not recurring, and a sealed marker or status makes it unknown', () => {
   const statuses: TaskStatusDefinition[] = [{ id: 'Done', group: 'done' }, { id: 'Todo', group: 'todo' }]
   const context = { statuses, lists: [], members: [] }
   const base = { id: 't', title: 'x', updated_at: null, status: 'Done', due_date: null, priority: null, assignees: [], labels: [], description: null, task_list_id: null, recurrence: null }
@@ -337,6 +341,15 @@ test('an undone marker does not make a task recurring, and a sealed marker match
   assert.equal(undone.recurring, false)
   const sealed = toTaskRow({ ...base, recurrence_next: ENCRYPTED } as never, context)
   assert.deepEqual(sealed.encrypted_fields, ['recurrence_next'])
+  assert.equal(sealed.recurring, null, 'unknown, not a one-off')
+  const live = JSON.stringify({ id: 'n', rule: 'FREQ=DAILY', state: 'live' })
+  // Reopened after completion: completing it again makes no occurrence, so it no longer repeats.
+  const reopened = toTaskRow({ ...base, status: 'Todo', recurrence_next: live } as never, context)
+  assert.equal(reopened.recurring, false)
+  assert.equal(matchesTaskFilters(reopened, { includeCompleted: true, today: '2026-07-01', recurring: true }, statuses), false)
+  // A live marker with an encrypted status cannot say whether the task is done.
+  const hidden = toTaskRow({ ...base, status: ENCRYPTED, recurrence_next: live } as never, context)
+  assert.equal(hidden.recurring, null)
   const filters = { includeCompleted: true, today: '2026-07-01' }
   assert.equal(matchesTaskFilters(sealed, { ...filters, recurring: false }, statuses), false)
   assert.equal(matchesTaskFilters(sealed, { ...filters, recurring: true }, statuses), false)
@@ -350,6 +363,12 @@ test('a list whose name is encrypted can be filtered by its exact id, never by a
   try {
     await withFake(async () => {
       assert.deepEqual(ids(await listTasks({ task_list: 'list-sealed' })), ['task-in-sealed'])
+      // The same for an unconverted list in the legacy table, and its name stays hidden.
+      LEGACY_LISTS.push({ id: 'list-old', name: ENCRYPTED, default_status: null })
+      TASKS.push({ id: 'task-in-old', title: 'Old list task', updated_at: '2026-07-01T10:00:00.000Z', props: { status: 'Todo', task_list_id: 'list-old' } })
+      const old = await listTasks({ task_list: 'list-old' })
+      assert.deepEqual(ids(old), ['task-in-old'])
+      assert.deepEqual(old.tasks[0]?.['task_list'], { id: 'list-old', name: null })
       const guess = await listTasks({ task_list: 'list-seal' }) as unknown as Record<string, unknown>
       assert.equal(guess['code'], 'invalid_input', JSON.stringify(guess))
       assert.match(String(guess['message']), /exact id/)
@@ -357,7 +376,9 @@ test('a list whose name is encrypted can be filtered by its exact id, never by a
   } finally {
     TASK_LIST_OBJECTS.pop()
     LIST_ID_PROPS.pop()
+    if (TASKS.at(-1)?.id === 'task-in-old') TASKS.pop()
     TASKS.pop()
+    LEGACY_LISTS.length = 0
   }
 })
 

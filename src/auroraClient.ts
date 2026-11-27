@@ -1250,6 +1250,7 @@ export async function readTaskLists(workspaceId: string): Promise<TaskListsSnaps
     if (knownListIds.has(legacy.id)) continue
     if (isEncryptedMetadataValue(legacy.name)) {
       encryptedCount += 1
+      if (legacy.id && !isEncryptedMetadataValue(legacy.id)) encryptedNameIds.push(legacy.id)
       continue
     }
     lists.push(legacy)

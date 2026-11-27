@@ -18,8 +18,10 @@ All notable changes to this project are documented in this file.
   revision to pass to `update_task` as `expected_updated_at`. End-to-end
   encrypted values are not shown; their fields are listed in
   `encrypted_fields`. A completed repeating task still counts as repeating
-  and shows the rule it ran on. A name two lists or two members share is
-  refused; pass the id or email. A list whose name is encrypted can be named
+  and shows the rule it ran on; a reopened one does not, and `recurring` is
+  null when encryption hides the answer. A name two lists or two members
+  share is refused, here and in `create_task` and `update_task`; pass the id
+  or email. A list whose name is encrypted can be named
   by its exact id. `me` needs a user session: with an MCP client credential,
   pass your name, email or id.
 
