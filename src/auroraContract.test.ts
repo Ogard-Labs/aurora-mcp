@@ -392,12 +392,12 @@ test('whitespace inside a quoted value must match exactly (#49 review)', async (
 test('a slash after a function or class expression body divides (#49 review)', async () => {
   const version = AURORA_CONTRACT.find((entry) => entry.id === 'task-status-config-version')
   assert.ok(version)
-  for (const expression of ['function () {}', 'function named(a, b) { return a }', 'async function* () {}', 'class {}', 'class A extends B {}', '(function () {})']) {
+  for (const expression of ['class extends mixin(Base) {}', '{ make: function () {} }.make', 'x ? class {} : 1 && class {}', 'function named(a, b) { return a }', 'async function* () {}', 'class {}', 'class A extends B {}', '(function () {})']) {
     const stale = `const half = ${expression} / 2 /* ${version.source}; old */\nexport const TASK_STATUS_CONFIG_VERSION = 2\n`
     assert.equal((await checkDrift([version], '/checkout', async () => stale)).length, 1, expression)
   }
   // A function or class declaration is a statement: a `/` after its body starts a regex.
-  for (const declaration of ['function f() {}', 'async function f() {}', 'class A {}', 'class A extends B {}', 'export function f() {}']) {
+  for (const declaration of ['switch (k) { case \'md\': class Parser {}', 'switch (k) { default: function f() {}', 'switch (k) { case a.b: async function f() {}', 'async function f() {}', 'class A {}', 'class A extends B {}', 'export function f() {}']) {
     const text = `${declaration}\n/a\\/*/.test(s) // c`
     assert.equal(stripComments(text), `${declaration}\n/a\\/*/.test(s)     `, declaration)
   }

@@ -33,6 +33,8 @@ const CLASS_HEAD = new RegExp(String.raw`${NOT_NAME}class(?:\s+(?!extends(?!${NA
 // `globalThis.String.raw`, or wrapped in parentheses.
 const RAW_REF = String.raw`(?:globalThis\s*\.\s*)?String\s*(?:\.\s*raw|\[\s*(?:'raw'|"raw")\s*\])`
 const RAW_TAG = new RegExp(String.raw`(?:^|[^.\p{ID_Continue}$])(?:${RAW_REF}|\(\s*${RAW_REF}\s*\))$`, 'u')
+// A switch label: the code since the last `;`, `{` or `}` starts with `case` or `default` and holds no `?`.
+const SWITCH_LABEL = /^\s*(?:case(?![\p{ID_Continue}$])[^?]*|default\s*):\s*$/u
 const CONTROL_BEFORE_PAREN = new RegExp(String.raw`${NOT_NAME}(?:if|while|for|with)\s*$`, 'u')
 const NUMBER_DOT = new RegExp(String.raw`(?:^|(?!${NAME}|\.)[^])\d[\d_]*\.\s*$`, 'u')
 const ENDS_WITH_NAME = new RegExp(`${NAME}$`, 'u')
@@ -119,12 +121,14 @@ export function scanSource(source) {
     if (!match) return false
     const start = match.index + (/^[A-Za-z]/.test(match[0]) ? 0 : String.fromCodePoint(match[0].codePointAt(0)).length)
     const before = text.slice(0, start)
+    // A `case x:` or `default:` label is followed by statements, so a function or class there is a declaration.
+    if (/:\s*$/.test(before) && SWITCH_LABEL.test(before.slice(Math.max(before.lastIndexOf(';'), before.lastIndexOf('{'), before.lastIndexOf('}')) + 1))) return false
     return !/\.\s*$/.test(before) && operandPosition(before)
   }
   const opensObject = () => {
     const before = out.replace(/\s+$/, '')
-    if (before.endsWith(')')) return closedFunctionExpression
     if (expressionHead(before, CLASS_HEAD)) return true
+    if (before.endsWith(')')) return closedFunctionExpression
     if (before.endsWith('=>')) return false
     return operandPosition(before)
   }
