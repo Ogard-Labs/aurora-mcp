@@ -291,7 +291,7 @@ export function findInCode(raw, needle, literal, statement = false) {
     const inCode = (!literal || literal[start] === 0) && literalsExact(raw, start, match[1].length, needle, literal)
     // An entry that is one whole string or template is an operand: the code after it must not go on with
     // the value (`'/route' + '/v2'` is another route).
-    const operandKept = !wholeLiteral(needle) || (!joinsOperandBefore(raw.slice(0, start)) && !continuesOperand(raw.slice(match.index + match[0].length)))
+    const operandKept = !wholeLiteral(needle) || operandKeptAt(raw, start, match.index + match[0].length)
     if (inCode && operandKept && !statement) return true
     const tail = /^(?:[ \t]|\/\*(?:[^*\n]|\*(?!\/))*\*\/)*(?:([;}])|(?:\/\/[^\n]*)?(?:\r?\n|$))/.exec(raw.slice(match.index + match[0].length))
     if (statement && inCode && operandKept && tail && (tail[1] || !continuesExpression(raw.slice(match.index + match[0].length + tail[0].length)))) return true
@@ -337,22 +337,104 @@ function wholeLiteral(needle) {
   return true
 }
 
-/** Whether code that ends `before` (comments are already blanked) joins an operator to the operand after it. `=>` does not. */
+/**
+ * Whether the whole literal at `start`..`end` of `raw` is used as one value:
+ * nothing joins an operator to it on either side. TypeScript assertions
+ * (`<T>x`, `x!`, `x as T`, `x satisfies T`) and grouping parentheses keep the
+ * value, so the check looks through them; call parentheses (`f(x)`) end it.
+ */
+function operandKeptAt(raw, start, end) {
+  let left = skipLeftAssertions(raw.slice(0, start))
+  let right = skipRightAssertions(raw.slice(end))
+  while (left.endsWith('(') && right.startsWith(')') && groupsParen(left.slice(0, -1))) {
+    left = skipLeftAssertions(left.slice(0, -1))
+    right = skipRightAssertions(right.slice(1))
+  }
+  return !joinsOperandBefore(left) && !continuesOperand(right)
+}
+
+/** Whether a `(` after `before` groups an expression rather than calling something. */
+function groupsParen(before) {
+  const code = before.replace(/\s+$/, '')
+  if (ENDS_WITH_NAME.test(code)) return endsWithKeyword(code, REGEX_AFTER_WORD)
+  return !/[)\]]$/.test(code)
+}
+
+/** `before` without trailing whitespace and angle-bracket assertions such as `<const>` or `<A.B>`. */
+function skipLeftAssertions(before) {
+  const cast = new RegExp(String.raw`(^|[^\p{ID_Continue}$)\]\s])(\s*)<\s*${NAME}+(?:\s*\.\s*${NAME}+)*\s*>\s*$`, 'u')
+  let code = before.replace(/\s+$/, '')
+  for (let next = code.replace(cast, '$1$2').replace(/\s+$/, ''); next !== code; next = code.replace(cast, '$1$2').replace(/\s+$/, '')) code = next
+  return code
+}
+
+const skipSpace = (text) => text.replace(/^(?:\s|\/\/[^\n]*|\/\*(?:[^*]|\*(?!\/))*\*\/)*/, '')
+
+/** `rest` without leading whitespace, comments, non-null `!` (not `!=`), and `as T` or `satisfies T` assertions. */
+function skipRightAssertions(rest) {
+  let code = skipSpace(rest)
+  for (;;) {
+    if (/^!(?!=)/.test(code)) { code = skipSpace(code.slice(1)); continue }
+    const keyword = new RegExp(String.raw`^(?:as|satisfies)(?!${NAME})\s*`, 'u').exec(code)
+    if (!keyword) return code
+    const after = skipType(code.slice(keyword[0].length))
+    if (after === null) return code
+    code = skipSpace(after)
+  }
+}
+
+/** The index just past the bracket that closes the one at `text[0]`, or -1. Quotes are read through. */
+function closeBracket(text) {
+  const pairs = { '(': ')', '[': ']', '{': '}', '<': '>' }
+  const stack = []
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i]
+    if (char === "'" || char === '"' || char === '`') {
+      for (i += 1; i < text.length && text[i] !== char; i += text[i] === '\\' ? 2 : 1);
+    } else if (pairs[char] && (char !== '<' || stack.length === 0 || stack[stack.length - 1] === '>')) {
+      stack.push(pairs[char])
+    } else if (char === stack[stack.length - 1]) {
+      stack.pop()
+      if (stack.length === 0) return i + 1
+    }
+  }
+  return -1
+}
+
+/** `text` after one TypeScript type at its start (names, literals, generics, indexed access, unions), or null. */
+function skipType(text) {
+  let code = text
+  for (;;) {
+    code = code.replace(/^\s*(?:(?:keyof|typeof|readonly|unique)\s+)*/, '')
+    const simple = new RegExp(String.raw`^(?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|-?\d[\d_.]*|${NAME}+(?:\s*\.\s*${NAME}+)*)`, 'u').exec(code)
+    if (simple) code = code.slice(simple[0].length)
+    else if (/^[([{]/.test(code)) {
+      const close = closeBracket(code)
+      if (close < 0) return null
+      code = code.slice(close)
+    } else return null
+    // Generic arguments and indexed access or array suffixes.
+    for (let suffix = /^\s*[<[]/.exec(code); suffix; suffix = /^\s*[<[]/.exec(code)) {
+      const close = closeBracket(code.slice(suffix[0].length - 1))
+      if (close < 0) return null
+      code = code.slice(suffix[0].length - 1 + close)
+    }
+    const union = /^\s*(?:\|(?!\|)|&(?!&))/.exec(code)
+    if (!union) return code
+    code = code.slice(union[0].length)
+  }
+}
+
+/** Whether code that ends `before` (comments are already blanked, assertions skipped) joins an operator to the operand after it. `=>` does not. */
 function joinsOperandBefore(before) {
-  // A TypeScript angle-bracket assertion (`<const>'...'`) does not change the value.
-  const code = before.replace(/\s+$/, '').replace(new RegExp(String.raw`(^|[^\p{ID_Continue}$)\]\s])(\s*)<\s*${NAME}+(?:\s*\.\s*${NAME}+)*\s*>$`, 'u'), '$1$2').replace(/\s+$/, '')
+  const code = before.replace(/\s+$/, '')
   if (code.endsWith('=>')) return false
   return /[+\-*/%&|^<>?]$/.test(code) || new RegExp(String.raw`(?:^|(?!${NAME})[^])(?:in|instanceof)$`, 'u').test(code)
 }
 
-/** Whether code that starts `rest` (after whitespace and comments) goes on with the operand before it. */
+/** Whether code that starts `rest` (assertions already skipped) goes on with the operand before it. */
 function continuesOperand(rest) {
-  const skip = (text) => text.replace(/^(?:\s|\/\/[^\n]*|\/\*(?:[^*]|\*(?!\/))*\*\/)*/, '')
-  // TypeScript's non-null `!` (not `!=`), `as T` and `satisfies T` do not change the value: skip them, then
-  // look at what follows.
-  const assertion = new RegExp(String.raw`^(?:!(?!=)|(?:as|satisfies)\s+(?:const|${NAME}+(?:\s*\.\s*${NAME}+)*(?:\s*<[^<>;]*>)?(?:\s*\[\s*\])*)(?!${NAME}))`, 'u')
-  let code = skip(rest)
-  for (let next = code.replace(assertion, ''); next !== code; next = code.replace(assertion, '')) code = skip(next)
+  const code = skipSpace(rest)
   // A `(` or a backtick after a string would call it, which no route does.
   return new RegExp(String.raw`^(?:[+\-*/%.?\[&|=<>^!]|(?:in|instanceof)(?!${NAME}))`, 'u').test(code)
 }

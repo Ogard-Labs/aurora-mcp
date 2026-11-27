@@ -407,13 +407,20 @@ test('a route string that is extended is drift (#49 review)', async () => {
   const literalRoutes = AURORA_CONTRACT.filter((entry) => /^['"`]/.test(entry.source) && entry.source.endsWith(entry.source[0]))
   assert.ok(literalRoutes.length > 0)
   for (const route of literalRoutes) {
-    for (const extended of [` as string + '/v2'`, ` as const satisfies string\n  + '/v2'`, ` as Route<'x'>[] + '/v2'`, `! as string + '/v2'`, `! + '/v2'`, ` != other`, `!.concat('x')`, ` + '/v2';`, `\n  + '/v2'`, `.concat('/v2')`, ` /* c */ + suffix`, `[0]`]) {
+    for (const extended of [` as string + '/v2'`, ` as const satisfies string\n  + '/v2'`, ` as Route<'x'>[] + '/v2'`, `! as string + '/v2'`, `! + '/v2'`, ` != other`, `!.concat('x')`, `\n  + '/v2'`, `.concat('/v2')`, ` /* c */ + suffix`, `[0]`]) {
       const text = `app.get(${route.source}${extended}, handler)\n`
       assert.equal((await checkDrift([route], '/checkout', async () => text)).length, 1, `${route.id}${extended}`)
     }
     for (const prefix of [`const r = '/v2' + `, `x > `, `a <b> `, `'/v2' +\n  `, `base /* c */ + `, `flag ? `, `x || `]) {
       const text = `app.get(${prefix}${route.source}, handler)\n`
       assert.equal((await checkDrift([route], '/checkout', async () => text)).length, 1, `${prefix}${route.id}`)
+    }
+    // Grouping parentheses keep the value, so an operator outside them still joins it.
+    for (const grouped of [`app.get('/v2' + (<const>${route.source}), handler)`, `app.get((${route.source}!) + '/v2', handler)`, `app.get(((${route.source} as string)) + x, handler)`, `const r = ${route.source} + '/v2';`]) {
+      assert.equal((await checkDrift([route], '/checkout', async () => `${grouped}\n`)).length, 1, grouped)
+    }
+    for (const kept of [`app.get((${route.source}), handler)`, `app.get((<const>${route.source}!), handler)`, `app.get(${route.source} as Routes['importCapabilities'], handler)`, `app.get(${route.source} as A | B<C<D>>, handler)`, `app.get(${route.source} as Record<string, number>[keyof T], handler)`, `const r = ${route.source} satisfies 'a' | "b";`]) {
+      assert.deepEqual(await checkDrift([route], '/checkout', async () => `${kept}\n`), [], kept)
     }
     // A whole statement after the joined value must not let the match through either.
     assert.equal((await checkDrift([route], '/checkout', async () => `const r = '/v2' + ${route.source};\n`)).length, 1, route.id)
