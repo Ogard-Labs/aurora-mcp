@@ -59,7 +59,7 @@ export function endsLine(raw, needle) {
     : `${/^(?:return|throw|yield)$/.test(words[index - 1]) ? '[ \\t]+' : '\\s+'}${escape(word)}`).join('')
   const pattern = new RegExp(`(?:^|[^A-Za-z0-9_$])${body}`, 'g')
   for (let match = pattern.exec(raw); match; match = pattern.exec(raw)) {
-    const tail = /^(?:[ \t]*\/\*[^\n]*?\*\/)*[ \t]*(?:([;}])|(?:\/\/[^\n]*)?(?:\r?\n|$))/.exec(raw.slice(match.index + match[0].length))
+    const tail = /^(?:[ \t]|\/\*(?:[^*\n]|\*(?!\/))*\*\/)*(?:([;}])|(?:\/\/[^\n]*)?(?:\r?\n|$))/.exec(raw.slice(match.index + match[0].length))
     if (tail && (tail[1] || !continuesExpression(raw.slice(match.index + match[0].length + tail[0].length)))) return true
     pattern.lastIndex = match.index + 1
   }
@@ -72,7 +72,7 @@ export function endsLine(raw, needle) {
  * a line break, so a next line starting with them is a statement of its own.
  */
 function continuesExpression(rest) {
-  const code = rest.replace(/^(?:\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/)*/, '')
+  const code = rest.replace(/^(?:\s|\/\/[^\n]*|\/\*(?:[^*]|\*(?!\/))*\*\/)*/, '')
   return /^(?:[+\-*/%.?([`&|=<>^,:]|(?:in|instanceof)(?![A-Za-z0-9_$]))/.test(code)
 }
 

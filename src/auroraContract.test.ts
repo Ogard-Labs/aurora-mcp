@@ -182,3 +182,12 @@ test('formatting alone is not drift, and a return split from its value is (#49 r
   assert.equal(endsLine(`${version}\n  = 2\n`, version), false)
 })
 
+
+test('the statement end check stays fast on long runs of comment markers (#49 review)', () => {
+  const needle = 'export const TASK_STATUS_CONFIG_VERSION = 1'
+  const started = Date.now()
+  for (const tail of [` /*${'*//*'.repeat(5000)}`, `\n/*${'*//*'.repeat(5000)}`, ` ${'/**/'.repeat(5000)}x`]) endsLine(`${needle}${tail}`, needle)
+  assert.ok(Date.now() - started < 1000)
+  assert.equal(endsLine(`${needle} /* a */ /* b */\n`, needle), true)
+  assert.equal(endsLine(`${needle} /* a */ + 1\n`, needle), false)
+})
