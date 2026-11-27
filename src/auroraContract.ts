@@ -27,6 +27,13 @@ export const TASK_PROPERTY_KEYS = {
   recurrenceNext: 'recurrence_next',
 } as const
 
+/** Properties of a `task_list` object that the server reads. */
+export const TASK_LIST_PROPERTY_KEYS = {
+  listId: 'list_id',
+  defaultStatus: 'default_status',
+  position: 'position',
+} as const
+
 /** The hidden object type that holds a workspace's synced settings. */
 export const WORKSPACE_CONFIG_OBJECT_TYPE = 'workspace_config'
 
@@ -78,6 +85,7 @@ export const AURORA_ROUTES = {
   objectAttachments: '/api/mcp/workspaces/:workspaceId/objects/:objectId/attachments',
   authMe: '/auth/me',
   authLogin: '/auth/login',
+  workspaceMembers: '/workspaces/:workspaceId/members',
 } as const
 
 /** The prefix AuroraCloud mounts its MCP routes under, besides `/mcp`. */
@@ -105,6 +113,8 @@ export type AuroraContractEntry = {
   source: string
   /** Where this server uses the value. */
   usedBy: string[]
+  /** `source` is a whole statement: nothing but `;` or a line comment may follow it on its line. */
+  lineEnd?: boolean
 }
 
 const TASKS_FILE = 'packages/core/src/lib/tasks.ts'
@@ -153,15 +163,22 @@ export const AURORA_CONTRACT: readonly AuroraContractEntry[] = [
     usedBy: ['src/objectTypes.ts', 'src/taskStatuses.ts'],
   },
   {
+    id: 'workspace-config-id-alphabet',
+    what: 'workspace config object id alphabet and length',
+    value: WORKSPACE_CONFIG_ID_CHARS,
+    file: 'packages/core/src/lib/workspaceConfigObject.ts',
+    source: `const ID_CHARS = '${WORKSPACE_CONFIG_ID_CHARS}' const ID_LENGTH = ${WORKSPACE_CONFIG_ID_LENGTH}`,
+    usedBy: ['src/taskStatuses.ts'],
+    lineEnd: true,
+  },
+  {
     id: 'workspace-config-id',
     what: 'workspace config object id formula',
     value: WORKSPACE_CONFIG_ID_SEED,
     file: 'packages/core/src/lib/workspaceConfigObject.ts',
-    source: `const ID_CHARS = '${WORKSPACE_CONFIG_ID_CHARS}' const ID_LENGTH = ${WORKSPACE_CONFIG_ID_LENGTH}`
-      + ' /** The config object\'s id for a workspace, in the same 15-character alphabet as `newId`. */'
-      + ' export function workspaceConfigObjectId(workspaceId: string): string {'
+    // From the signature to the closing brace, so a change to how digest bytes become characters is drift too.
+    source: 'export function workspaceConfigObjectId(workspaceId: string): string {'
       + ` const digest = sha256(new TextEncoder().encode(\`${WORKSPACE_CONFIG_ID_SEED}\${workspaceId}\`))`
-      // The digest-to-character step too: the id is wrong if any of it changes.
       + " let id = '' for (let index = 0; index < ID_LENGTH; index += 1) {"
       + ' id += ID_CHARS[(digest[index] as number) % ID_CHARS.length] } return id }',
     usedBy: ['src/taskStatuses.ts'],
@@ -181,6 +198,7 @@ export const AURORA_CONTRACT: readonly AuroraContractEntry[] = [
     file: 'packages/core/src/lib/taskStatusConfig.ts',
     source: `export const TASK_STATUS_CONFIG_VERSION = ${TASK_STATUS_CONFIG_VERSION}`,
     usedBy: ['src/taskStatuses.ts'],
+    lineEnd: true,
   },
   {
     id: 'legacy-done-status',
@@ -303,6 +321,30 @@ export const AURORA_CONTRACT: readonly AuroraContractEntry[] = [
     value: AURORA_ROUTES.authLogin,
     file: 'apps/api/src/routes/auth.ts',
     source: `app.post<{ Body: AuthRequestBody }>('${AURORA_ROUTES.authLogin}', async (request, reply) => {`,
+    usedBy: ['src/auroraClient.ts'],
+  },
+  {
+    id: 'task-list-key-list_id',
+    what: 'task list property key `list_id`',
+    value: TASK_LIST_PROPERTY_KEYS.listId,
+    file: 'packages/core/src/lib/taskListObjects.ts',
+    source: `export const TASK_LIST_ID_KEY = '${TASK_LIST_PROPERTY_KEYS.listId}'`,
+    usedBy: ['src/auroraClient.ts'],
+  },
+  ...(['defaultStatus', 'position'] as const).map((name): AuroraContractEntry => ({
+    id: `task-list-key-${TASK_LIST_PROPERTY_KEYS[name]}`,
+    what: `task list property key \`${TASK_LIST_PROPERTY_KEYS[name]}\``,
+    value: TASK_LIST_PROPERTY_KEYS[name],
+    file: 'packages/core/src/lib/taskListObjects.ts',
+    source: `${name}: '${TASK_LIST_PROPERTY_KEYS[name]}',`,
+    usedBy: ['src/auroraClient.ts'],
+  })),
+  {
+    id: 'route-workspace-members',
+    what: 'workspace member list route',
+    value: AURORA_ROUTES.workspaceMembers,
+    file: 'apps/api/src/routes/workspaces.ts',
+    source: `app.get<{ Params: { workspaceId: string } }>( '${AURORA_ROUTES.workspaceMembers}',`,
     usedBy: ['src/auroraClient.ts'],
   },
 ]

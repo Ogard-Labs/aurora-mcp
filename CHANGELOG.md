@@ -14,7 +14,10 @@ All notable changes to this project are documented in this file.
   (`list_task_lists`, `list_task_statuses`, `list_objects`, `wiki_search`) and
   reports failures in one issue, with only a sanitized summary (the
   repository is public). `pnpm check` stays offline. A knowledge answer
-  without its `items` list is now an error, not an empty result.
+  without its `items` list, or with a source row the server cannot read, is
+  now an error, not an empty result. If the auroradocs checkout fails, the
+  weekly run still runs the live smoke and the issue says why the contract
+  check was skipped.
 
 - `list_tasks` and `get_task` (#50). `list_tasks` answers "what is overdue",
   "what is assigned to me" or "what is in list Work" in one call: compact rows

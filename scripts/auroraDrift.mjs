@@ -38,6 +38,19 @@ export function containsWhole(text, needle) {
   return false
 }
 
+/**
+ * Whether `needle` appears in `raw` as the rest of a line: only an optional
+ * `;` and a line comment may follow it. An entry sets `lineEnd` when its source
+ * is a whole statement, so `VERSION = 1` does not match `VERSION = 1.1` or
+ * `VERSION = 1 + 1`. Runs of whitespace in `needle` match any whitespace.
+ */
+export function endsLine(raw, needle) {
+  const words = collapse(needle).split(' ').filter(Boolean)
+  if (words.length < 1) return false
+  const body = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+')
+  return new RegExp(`(?:^|[^A-Za-z0-9_$])${body}[ \\t]*;?[ \\t]*(?://[^\\n]*)?(?:\\r?\\n|$)`).test(raw)
+}
+
 /** Checks each entry against the auroradocs checkout at `root`. Returns the drifted entries with a reason. */
 export async function checkDrift(entries, root, read = (file) => readFile(file, 'utf8')) {
   const cache = new Map()
@@ -45,12 +58,12 @@ export async function checkDrift(entries, root, read = (file) => readFile(file, 
   for (const entry of entries) {
     const file = path.join(root, entry.file)
     if (!cache.has(file)) {
-      cache.set(file, read(file).then(collapse, (error) => ({ missing: error?.code ?? String(error) })))
+      cache.set(file, read(file).then((raw) => ({ raw, text: collapse(raw) }), (error) => ({ missing: error?.code ?? String(error) })))
     }
-    const text = await cache.get(file)
-    if (typeof text !== 'string') {
-      drifted.push({ entry, reason: `${entry.file} could not be read (${text.missing}); it may have moved` })
-    } else if (!containsWhole(text, collapse(entry.source))) {
+    const loaded = await cache.get(file)
+    if ('missing' in loaded) {
+      drifted.push({ entry, reason: `${entry.file} could not be read (${loaded.missing}); it may have moved` })
+    } else if (!containsWhole(loaded.text, collapse(entry.source)) || (entry.lineEnd && !endsLine(loaded.raw, entry.source))) {
       drifted.push({ entry, reason: `${entry.file} no longer contains: ${collapse(entry.source)}` })
     }
   }

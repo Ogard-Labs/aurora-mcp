@@ -41,9 +41,12 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # A GitHub App installed on Ogard-Labs/auroradocs with read-only Contents
-      # access. Its token lasts one hour and belongs to no person.
+      # access. Its token lasts one hour and belongs to no person. If it or the
+      # checkout fails, the contract check is skipped and reported, and the live
+      # smoke still runs: one missing setting must not hide the other check.
       - name: Get a read-only token for auroradocs
         id: auroradocs-token
+        continue-on-error: true
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ vars.AURORADOCS_READER_APP_ID }}
@@ -53,6 +56,9 @@ jobs:
           permission-contents: read
 
       - name: Check out auroradocs main, read-only
+        id: auroradocs-checkout
+        if: steps.auroradocs-token.outcome == 'success'
+        continue-on-error: true
         uses: actions/checkout@v7
         with:
           repository: Ogard-Labs/auroradocs
@@ -68,6 +74,7 @@ jobs:
 
       - name: Check the AuroraCloud contract
         id: contract
+        if: steps.auroradocs-checkout.outcome == 'success'
         continue-on-error: true
         run: |
           set -o pipefail
@@ -83,11 +90,15 @@ jobs:
           AURORA_API_URL: ${{ secrets.AURORA_API_URL }}
           AURORA_WORKSPACE_ID: ${{ secrets.AURORA_WORKSPACE_ID }}
           AURORA_API_TOKEN: ${{ secrets.AURORA_API_TOKEN }}
-          AURORA_SMOKE_WORKSPACE_ID: ${{ vars.AURORA_SMOKE_WORKSPACE_ID }}
+          AURORA_SMOKE_WORKSPACE_ID: ${{ secrets.AURORA_SMOKE_WORKSPACE_ID }}
           AURORA_SMOKE_EXTENDED: '1'
 
       - name: Open or update the drift issue
-        if: steps.contract.outcome == 'failure' || steps.smoke.outcome == 'failure'
+        if: >-
+          steps.auroradocs-token.outcome == 'failure'
+          || steps.auroradocs-checkout.outcome == 'failure'
+          || steps.contract.outcome == 'failure'
+          || steps.smoke.outcome == 'failure'
         uses: actions/github-script@v8
         with:
           script: |
@@ -101,11 +112,16 @@ jobs:
             const smokeLines = read('smoke-report.txt').split('\n')
               .filter((line) => /^(AuroraCloud MCP live smoke|Live smoke tool|AURORA_[A-Z_]+ )/.test(line))
             const smoke = smokeLines.length ? smokeLines.slice(-5).join('\n') : '(no summary line; see the run log)'
+            const tokenOutcome = '${{ steps.auroradocs-token.outcome }}'
+            const checkoutOutcome = '${{ steps.auroradocs-checkout.outcome }}'
+            const contract = checkoutOutcome === 'success'
+              ? read('drift-report.txt')
+              : `Skipped: auroradocs could not be read (token ${tokenOutcome}, checkout ${checkoutOutcome || 'skipped'}). Check the AURORADOCS_READER_APP_ID variable, the AURORADOCS_READER_PRIVATE_KEY secret and the app's installation.`
             const body = [
               `The scheduled drift check failed on ${new Date().toISOString().slice(0, 10)}. Run: ${run}`,
               '',
-              `**Contract check:** ${'${{ steps.contract.outcome }}'}`,
-              '```', read('drift-report.txt'), '```',
+              `**Contract check:** ${'${{ steps.contract.outcome }}' || 'skipped'}`,
+              '```', contract, '```',
               `**Extended live smoke:** ${'${{ steps.smoke.outcome }}'}`,
               '```', smoke, '```',
             ].join('\n')

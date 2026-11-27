@@ -77,7 +77,9 @@ and opens or updates one "AuroraCloud drift detected" issue when either fails.
 It reads auroradocs with a short-lived token from a GitHub App that has
 read-only Contents access to that repository only (`AURORADOCS_READER_APP_ID`
 variable, `AURORADOCS_READER_PRIVATE_KEY` secret, in the `production-smoke`
-environment).
+environment). If that token or checkout fails, the issue says so and the live
+smoke still runs. The smoke's settings, `AURORA_SMOKE_WORKSPACE_ID` included,
+are secrets in the same environment, because the workflow logs are public.
 
 Pass credentials through your protected local environment, never a committed
 file or recorded shell command. Do not preserve raw smoke output in the

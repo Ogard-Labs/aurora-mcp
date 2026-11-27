@@ -227,3 +227,22 @@ test('a knowledge answer without its items list is an error, not an empty result
     assert.deepEqual(result.sources, [])
   })
 })
+
+test('a knowledge row this server cannot read is an error, even beside a readable one (#49 review)', async () => {
+  await withServer((_req, res) => {
+    res.end(JSON.stringify({
+      workspaceId: 'workspace-1',
+      query: 'x',
+      limit: 3,
+      items: [
+        // The ids moved: AuroraCloud changed the row shape.
+        { workspace_id: 'workspace-1', object_id: 'page-2', title: 'Renamed fields' },
+        { workspaceId: 'workspace-1', objectId: 'page-1', objectType: 'page', title: 'Page', deepLink: '/object/page-1' },
+      ],
+    }))
+  }, async () => {
+    const result = await executeToolCall('wiki_search', { query: 'x' }, 'workspace-1') as { type: string; code?: string }
+    assert.equal(result.type, 'error')
+    assert.equal(result.code, 'server_error')
+  })
+})

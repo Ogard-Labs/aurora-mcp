@@ -7,7 +7,7 @@
  */
 import type { AuroraConnectionContext, ContentReadResult, GrantedWorkspace } from './contracts.js'
 import { AuroraApiError, ToolConflictError, ToolInputError, ToolNotFoundError } from './errors.js'
-import { auroraRoute, TASK_LIST_OBJECT_TYPE, TASK_PROPERTY_KEYS as KEYS } from './auroraContract.js'
+import { auroraRoute, TASK_LIST_OBJECT_TYPE, TASK_LIST_PROPERTY_KEYS as LIST_KEYS, TASK_PROPERTY_KEYS as KEYS } from './auroraContract.js'
 import { isHiddenSystemObjectType, uncreatableObjectTypeReason } from './objectTypes.js'
 import type {
   CustomDatabaseTemplateDefault,
@@ -1146,7 +1146,7 @@ export async function listMembers(workspaceId: string): Promise<AuroraWorkspaceM
   const response = await getAuroraClient().request<{
     members?: Array<{ userId?: string; name: string | null; email: string; role: string }>
     items?: Array<{ userId?: string; user?: { displayName?: string | null; email?: string }; role?: string }>
-  }>(`/workspaces/${workspaceId}/members`, {
+  }>(auroraRoute('workspaceMembers', { workspaceId }), {
     method: 'GET',
   })
   if (Array.isArray(response.members)) {
@@ -1216,7 +1216,7 @@ export async function readTaskLists(workspaceId: string): Promise<TaskListsSnaps
   const live: Array<{ list: AuroraTaskList; position: number; createdAt: string }> = []
   for (const object of objects) {
     const byKey = new Map((propsByObject.get(object.id) ?? []).map((prop) => [prop.key, prop]))
-    const listIdProp = byKey.get('list_id')
+    const listIdProp = byKey.get(LIST_KEYS.listId)
     const listId = listIdProp?.value_text ?? null
     if (isEncryptedMetadataValue(listId) || isEncryptedMetadataValue(object.title)) {
       if (!object.is_deleted) encryptedCount += 1
@@ -1231,8 +1231,8 @@ export async function readTaskLists(workspaceId: string): Promise<TaskListsSnaps
     knownListIds.add(listId)
     // Deleted on some device: the delete wins, and hides the legacy row too.
     if (object.is_deleted) continue
-    const defaultStatus = byKey.get('default_status')?.value_text ?? null
-    const position = byKey.get('position')?.value_num
+    const defaultStatus = byKey.get(LIST_KEYS.defaultStatus)?.value_text ?? null
+    const position = byKey.get(LIST_KEYS.position)?.value_num
     live.push({
       list: {
         id: listId,
@@ -1664,9 +1664,14 @@ function normalizeWorkspaceKnowledgeResponse(
   if (!Array.isArray(payload?.items)) {
     throw new AuroraApiError(502, 'server_error', 'AuroraCloud answered a knowledge request without its items list.')
   }
-  const items = payload.items
-    .map((item) => normalizeWorkspaceKnowledgeSource(item))
-    .filter((item): item is WorkspaceKnowledgeSource => item !== null)
+  const normalized = payload.items.map((item) => normalizeWorkspaceKnowledgeSource(item))
+  // A row without its object or workspace id is a shape this server cannot
+  // read either. Refuse it before hidden rows are dropped, so a changed row
+  // shape is never reported as an empty result.
+  if (normalized.some((item) => item === null)) {
+    throw new AuroraApiError(502, 'server_error', 'AuroraCloud answered a knowledge request with a source this server cannot read.')
+  }
+  const items = (normalized as WorkspaceKnowledgeSource[])
     // Hidden system objects are never knowledge, whichever wiki tool asked.
     .filter((item) => !isHiddenSystemObjectType(item.objectType))
   return {
