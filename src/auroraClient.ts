@@ -7,7 +7,7 @@
  */
 import type { AuroraConnectionContext, ContentReadResult, GrantedWorkspace } from './contracts.js'
 import { AuroraApiError, ToolConflictError, ToolInputError, ToolNotFoundError } from './errors.js'
-import { auroraRoute, TASK_PROPERTY_KEYS as KEYS } from './auroraContract.js'
+import { auroraRoute, TASK_LIST_OBJECT_TYPE, TASK_PROPERTY_KEYS as KEYS } from './auroraContract.js'
 import { isHiddenSystemObjectType, uncreatableObjectTypeReason } from './objectTypes.js'
 import type {
   CustomDatabaseTemplateDefault,
@@ -714,7 +714,7 @@ export async function uploadAuroraMcpAttachment(input: {
   const form = new FormData()
   form.append('file', new Blob([new Uint8Array(input.bytes)], { type: input.mimeType || 'application/octet-stream' }), fileName)
   const response = await getAuroraClient().request<Partial<AuroraAttachmentUpload>>(
-    `/api/mcp/workspaces/${encodeURIComponent(input.workspaceId)}/objects/${encodeURIComponent(input.objectId)}/attachments`,
+    auroraRoute('objectAttachments', { workspaceId: encodeURIComponent(input.workspaceId), objectId: encodeURIComponent(input.objectId) }),
     { method: 'POST', rawBody: form, headers: { 'idempotency-key': input.idempotencyKey } },
   )
   if (
@@ -1186,7 +1186,6 @@ export type TaskListsSnapshot = {
   encryptedNameIds: string[]
 }
 
-const TASK_LIST_OBJECT_TYPE = 'task_list'
 const TASK_LIST_PAGE_LIMIT = 20
 
 export async function readTaskLists(workspaceId: string): Promise<TaskListsSnapshot> {
@@ -1660,13 +1659,16 @@ function extractTextFromDoc(doc: Record<string, unknown>): string {
 function normalizeWorkspaceKnowledgeResponse(
   payload: Partial<WorkspaceKnowledgeResponse> | null | undefined,
 ): WorkspaceKnowledgeResponse {
-  const items = Array.isArray(payload?.items)
-    ? payload.items
-        .map((item) => normalizeWorkspaceKnowledgeSource(item))
-        .filter((item): item is WorkspaceKnowledgeSource => item !== null)
-        // Hidden system objects are never knowledge, whichever wiki tool asked.
-        .filter((item) => !isHiddenSystemObjectType(item.objectType))
-    : []
+  // AuroraCloud always lists sources in `items` (src/auroraContract.ts). An
+  // answer without it is a shape this server cannot read, not an empty result.
+  if (!Array.isArray(payload?.items)) {
+    throw new AuroraApiError(502, 'server_error', 'AuroraCloud answered a knowledge request without its items list.')
+  }
+  const items = payload.items
+    .map((item) => normalizeWorkspaceKnowledgeSource(item))
+    .filter((item): item is WorkspaceKnowledgeSource => item !== null)
+    // Hidden system objects are never knowledge, whichever wiki tool asked.
+    .filter((item) => !isHiddenSystemObjectType(item.objectType))
   return {
     workspaceId: typeof payload?.workspaceId === 'string' ? payload.workspaceId : '',
     query: typeof payload?.query === 'string' ? payload.query : null,
@@ -1807,7 +1809,7 @@ async function ensureAuthRecord(): Promise<void> {
   const client = getAuroraClient()
   if (client.authStore.record?.['id']) return
   if (!client.authStore.token) throw new Error('Authenticated token missing.')
-  const response = await client.request<{ user: Record<string, unknown> }>('/auth/me', { method: 'GET' })
+  const response = await client.request<{ user: Record<string, unknown> }>(auroraRoute('authMe'), { method: 'GET' })
   client.authStore.save(client.authStore.token, response.user)
 }
 
@@ -1891,7 +1893,7 @@ function createAuroraCloudClient(baseUrl: string): BackendClient {
     },
     async authWithPassword(email: string, password: string) {
       const result = await request<{ user: Record<string, unknown>; accessToken: string }>(
-        '/auth/login',
+        auroraRoute('authLogin'),
         { method: 'POST', body: { email, password } },
       )
       authStore.save(result.accessToken, result.user)

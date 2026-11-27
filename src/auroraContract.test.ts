@@ -17,7 +17,9 @@ test('every contract entry has a unique id and source text that holds the value 
 test('every task property key and every route is covered by an entry', () => {
   const values = new Set(AURORA_CONTRACT.map((entry) => entry.value))
   for (const key of Object.values(TASK_PROPERTY_KEYS)) assert.ok(values.has(key), key)
-  for (const route of Object.values(AURORA_ROUTES)) assert.ok(values.has(route), route)
+  // A project route is checked as its path under the MCP prefix, which has an entry of its own.
+  assert.ok(values.has('/api/mcp'))
+  for (const route of Object.values(AURORA_ROUTES)) assert.ok(values.has(route) || values.has(route.replace(/^\/api\/mcp/, '')), route)
 })
 
 /** A fake auroradocs checkout that holds exactly each entry's source text. */
@@ -75,3 +77,12 @@ test('a contract value must match whole: a longer number or name beside it is dr
   const drifted = await checkDrift([version], '/checkout', bumped)
   assert.equal(drifted.length, 1)
 })
+
+test('a change to how the config id turns digest bytes into characters is drift (#49 review)', async () => {
+  const read = fakeCheckout((file, text) => file === 'packages/core/src/lib/workspaceConfigObject.ts'
+    ? text.replace('(digest[index] as number) % ID_CHARS.length', '(digest[ID_LENGTH - index] as number) % ID_CHARS.length')
+    : text)
+  const drifted = await checkDrift(AURORA_CONTRACT, '/checkout', read)
+  assert.deepEqual(drifted.map((item: { entry: { id: string } }) => item.entry.id), ['workspace-config-id'])
+})
+

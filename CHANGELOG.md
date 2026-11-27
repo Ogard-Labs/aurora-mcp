@@ -12,7 +12,9 @@ All notable changes to this project are documented in this file.
   checks a read-only auroradocs checkout against it and names each entry that
   drifted. A weekly workflow runs it with an extended read-only live smoke
   (`list_task_lists`, `list_task_statuses`, `list_objects`, `wiki_search`) and
-  reports failures in one issue. `pnpm check` stays offline.
+  reports failures in one issue, with only a sanitized summary (the
+  repository is public). `pnpm check` stays offline. A knowledge answer
+  without its `items` list is now an error, not an empty result.
 
 - `list_tasks` and `get_task` (#50). `list_tasks` answers "what is overdue",
   "what is assigned to me" or "what is in list Work" in one call: compact rows

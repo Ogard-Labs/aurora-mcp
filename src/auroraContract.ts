@@ -27,11 +27,14 @@ export const TASK_PROPERTY_KEYS = {
   recurrenceNext: 'recurrence_next',
 } as const
 
-/** Object types Aurora hides from every listing, search and export. */
-export const HIDDEN_SYSTEM_OBJECT_TYPE_LIST = ['workspace_config', 'task_list'] as const
-
 /** The hidden object type that holds a workspace's synced settings. */
 export const WORKSPACE_CONFIG_OBJECT_TYPE = 'workspace_config'
+
+/** The hidden object type that holds one task list. */
+export const TASK_LIST_OBJECT_TYPE = 'task_list'
+
+/** Object types Aurora hides from every listing, search and export. */
+export const HIDDEN_SYSTEM_OBJECT_TYPE_LIST = [WORKSPACE_CONFIG_OBJECT_TYPE, TASK_LIST_OBJECT_TYPE] as const
 
 /** The property of the workspace config object that holds the task statuses, and its format version. */
 export const TASK_STATUS_CONFIG_PROPERTY_KEY = 'task_statuses'
@@ -70,7 +73,15 @@ export const AURORA_ROUTES = {
   knowledgeObject: '/api/knowledge/workspaces/:workspaceId/objects/:objectId',
   knowledgeRelated: '/api/knowledge/workspaces/:workspaceId/related/:objectId',
   knowledgeRecent: '/api/knowledge/workspaces/:workspaceId/recent',
+  projectContext: '/api/mcp/workspaces/:workspaceId/projects/context',
+  projectChanges: '/api/mcp/workspaces/:workspaceId/projects/:projectId/changes',
+  objectAttachments: '/api/mcp/workspaces/:workspaceId/objects/:objectId/attachments',
+  authMe: '/auth/me',
+  authLogin: '/auth/login',
 } as const
+
+/** The prefix AuroraCloud mounts its MCP routes under, besides `/mcp`. */
+const MCP_PREFIX = '/api/mcp'
 
 /** Fills an `AURORA_ROUTES` path's `:name` segments with `params`, as given (callers encode them). */
 export function auroraRoute(name: keyof typeof AURORA_ROUTES, params: Record<string, string> = {}): string {
@@ -149,7 +160,10 @@ export const AURORA_CONTRACT: readonly AuroraContractEntry[] = [
     source: `const ID_CHARS = '${WORKSPACE_CONFIG_ID_CHARS}' const ID_LENGTH = ${WORKSPACE_CONFIG_ID_LENGTH}`
       + ' /** The config object\'s id for a workspace, in the same 15-character alphabet as `newId`. */'
       + ' export function workspaceConfigObjectId(workspaceId: string): string {'
-      + ` const digest = sha256(new TextEncoder().encode(\`${WORKSPACE_CONFIG_ID_SEED}\${workspaceId}\`))`,
+      + ` const digest = sha256(new TextEncoder().encode(\`${WORKSPACE_CONFIG_ID_SEED}\${workspaceId}\`))`
+      // The digest-to-character step too: the id is wrong if any of it changes.
+      + " let id = '' for (let index = 0; index < ID_LENGTH; index += 1) {"
+      + ' id += ID_CHARS[(digest[index] as number) % ID_CHARS.length] } return id }',
     usedBy: ['src/taskStatuses.ts'],
   },
   {
@@ -242,4 +256,53 @@ export const AURORA_CONTRACT: readonly AuroraContractEntry[] = [
     source: `'${AURORA_ROUTES[name]}'] as const`,
     usedBy: ['src/auroraClient.ts'],
   })),
+  {
+    id: 'knowledge-response-items',
+    what: 'knowledge responses list their sources in `items`',
+    value: 'items',
+    file: 'apps/api/src/lib/knowledge.ts',
+    source: 'type WorkspaceKnowledgeResponse = { workspaceId: string query: string | null limit: number items: WorkspaceKnowledgeSource[] }',
+    usedBy: ['src/auroraClient.ts'],
+  },
+  {
+    id: 'route-mcp-prefix',
+    what: `MCP routes mounted under ${MCP_PREFIX}`,
+    value: MCP_PREFIX,
+    file: 'apps/api/src/routes/mcp.ts',
+    source: `for (const prefix of ['/mcp', '${MCP_PREFIX}'] as const)`,
+    usedBy: ['src/projectContext.ts'],
+  },
+  ...(['projectContext', 'projectChanges'] as const).map((name): AuroraContractEntry => ({
+    id: `route-${name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`,
+    what: `project route ${AURORA_ROUTES[name]}`,
+    // Mounted under each MCP prefix; the prefix has its own entry.
+    value: AURORA_ROUTES[name].slice(MCP_PREFIX.length),
+    file: 'apps/api/src/routes/mcp.ts',
+    source: `\`\${prefix}${AURORA_ROUTES[name].slice(MCP_PREFIX.length)}\``,
+    usedBy: ['src/projectContext.ts'],
+  })),
+  {
+    id: 'route-object-attachments',
+    what: 'attachment upload route',
+    value: AURORA_ROUTES.objectAttachments,
+    file: 'apps/api/src/routes/mcpAttachments.ts',
+    source: `'${AURORA_ROUTES.objectAttachments}', ] as const`,
+    usedBy: ['src/auroraClient.ts'],
+  },
+  {
+    id: 'route-auth-me',
+    what: 'signed-in user route',
+    value: AURORA_ROUTES.authMe,
+    file: 'apps/api/src/routes/auth.ts',
+    source: `app.get('${AURORA_ROUTES.authMe}', async (request, reply) => {`,
+    usedBy: ['src/auroraClient.ts'],
+  },
+  {
+    id: 'route-auth-login',
+    what: 'password sign-in route',
+    value: AURORA_ROUTES.authLogin,
+    file: 'apps/api/src/routes/auth.ts',
+    source: `app.post<{ Body: AuthRequestBody }>('${AURORA_ROUTES.authLogin}', async (request, reply) => {`,
+    usedBy: ['src/auroraClient.ts'],
+  },
 ]

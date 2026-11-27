@@ -14,7 +14,7 @@
  * them.
  */
 
-import { HIDDEN_SYSTEM_OBJECT_TYPE_LIST } from './auroraContract.js'
+import { HIDDEN_SYSTEM_OBJECT_TYPE_LIST, TASK_LIST_OBJECT_TYPE, WORKSPACE_CONFIG_OBJECT_TYPE } from './auroraContract.js'
 
 /** From the AuroraCloud contract (src/auroraContract.ts, #49). */
 export const HIDDEN_SYSTEM_OBJECT_TYPES: ReadonlySet<string> = new Set(HIDDEN_SYSTEM_OBJECT_TYPE_LIST)
@@ -31,11 +31,11 @@ export function isRetiredObjectType(type: string | null | undefined): boolean {
 
 /** Why the MCP may not create an object of this type, or null when it may. */
 export function uncreatableObjectTypeReason(type: string): string | null {
-  if (type === 'task_list') {
+  if (type === TASK_LIST_OBJECT_TYPE) {
     return 'Task lists cannot be created as objects through the MCP. Create or edit task lists in the Aurora app, then use list_task_lists.'
   }
-  if (type === 'workspace_config') {
-    return 'workspace_config is an internal Aurora object and cannot be created.'
+  if (type === WORKSPACE_CONFIG_OBJECT_TYPE) {
+    return `${WORKSPACE_CONFIG_OBJECT_TYPE} is an internal Aurora object and cannot be created.`
   }
   if (isRetiredObjectType(type)) {
     return `${type} is a retired Research Studio type and cannot be created. Use a page instead.`

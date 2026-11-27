@@ -210,3 +210,20 @@ test('create_object refuses hidden and retired types before writing', async () =
   })
   assert.deepEqual(writes, ['POST /api/collections/objects/records'])
 })
+
+test('a knowledge answer without its items list is an error, not an empty result (#49 review)', async () => {
+  await withServer((_req, res) => {
+    res.end(JSON.stringify({ workspaceId: 'workspace-1', query: 'x', limit: 3, results: [] }))
+  }, async () => {
+    const result = await executeToolCall('wiki_search', { query: 'x' }, 'workspace-1') as { type: string; code?: string }
+    assert.equal(result.type, 'error')
+    assert.equal(result.code, 'server_error')
+  })
+  await withServer((_req, res) => {
+    res.end(JSON.stringify({ workspaceId: 'workspace-1', query: 'x', limit: 3, items: [] }))
+  }, async () => {
+    const result = await executeToolCall('wiki_search', { query: 'x' }, 'workspace-1') as { type: string; sources: unknown[] }
+    assert.equal(result.type, 'knowledge_sources')
+    assert.deepEqual(result.sources, [])
+  })
+})

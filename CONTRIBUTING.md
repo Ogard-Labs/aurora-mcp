@@ -43,7 +43,8 @@ requires `AURORA_API_URL` and `AURORA_API_TOKEN`. Prefer an
 `aur_mcp_...` token remains supported but also requires
 `AURORA_WORKSPACE_ID`. Give either credential only `read:objects`; add optional
 `read:content` only when the project context needs readable briefs or citations.
-Do not grant write or task scopes.
+Do not grant write scopes, and grant `read:tasks` or `search` only for the
+extended smoke below.
 
 The smoke always calls `list_workspaces`. Set `AURORA_SMOKE_PROJECT_ID` only
 when you want one bounded `get_project_context` request. Without it, the smoke
@@ -54,7 +55,9 @@ authoritatively classified as read-only and never dispatches a write tool.
 
 Set `AURORA_SMOKE_EXTENDED=1` to also call `list_task_lists`,
 `list_task_statuses`, `list_objects` and `wiki_search` once each on the selected
-workspace. These are read-only too; `wiki_search` needs the `search` scope.
+workspace. These are read-only too. The credential then also needs
+`read:tasks` (for `list_task_lists` and `list_task_statuses`) and `search` (for
+`wiki_search`), besides `read:objects`.
 
 ## AuroraCloud contract and drift check
 
