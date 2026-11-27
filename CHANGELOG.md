@@ -12,8 +12,9 @@ All notable changes to this project are documented in this file.
   destructive, as `delete_object` already was, so clients that confirm
   destructive calls ask before they run. So are `create_template`,
   `create_from_template`, `update_object_type` and
-  `apply_custom_database_plan`, which rewrite an existing template, object or
-  type when given an ID that already exists. Tools that only add
+  `apply_custom_database_plan`: a reused template or object ID rewrites its
+  content and property values, and a type update can rename a type or clear
+  its icon or colour. Tools that only add
   (`create_object`, `create_task`, `append_block`, `restore_object` and the
   Obsidian import) are not.
 - `openWorldHint` is now `false` for every tool: each one works on the
