@@ -35,6 +35,10 @@ export function stripComments(source) {
   let index = 0
   // One entry per open `${`: the brace depth inside that interpolation.
   const interpolations = []
+  // One entry per open `(`: whether it holds an `if`, `while`, `for` or `with`
+  // condition, after which a `/` starts a regex rather than dividing.
+  const parens = []
+  let closedControl = false
   const blank = (text) => text.replace(/[^\r\n\u2028\u2029]/g, ' ')
   const take = (stop) => { out += source.slice(index, stop); index = stop }
   // Reads a template literal from just after its opening backtick, up to its
@@ -52,6 +56,7 @@ export function stripComments(source) {
     const before = out.replace(/\s+$/, '')
     if (!before) return true
     if (/[A-Za-z0-9_$]$/.test(before)) return REGEX_AFTER_WORD.test(before)
+    if (before.endsWith(')')) return closedControl
     return /[(,=:[!&|?{};+\-*%<>~^]$/.test(before)
   }
   while (index < source.length) {
@@ -85,6 +90,12 @@ export function stripComments(source) {
       } else {
         interpolations[interpolations.length - 1] -= 1
       }
+    } else if (char === '(') {
+      parens.push(/(?:^|[^A-Za-z0-9_$])(?:if|while|for|with)\s*$/.test(out))
+      take(index + 1)
+    } else if (char === ')') {
+      closedControl = parens.pop() ?? false
+      take(index + 1)
     } else if (char === '/' && regexMayStart()) {
       let stop = index + 1
       let inClass = false

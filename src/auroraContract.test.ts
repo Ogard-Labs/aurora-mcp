@@ -231,3 +231,14 @@ test('comment markers inside regular expressions and nested templates are not co
   assert.equal(stripComments('x = y / 2 // z'), 'x = y / 2     ')
   assert.equal(stripComments('const t = `${a /* in */}`'), 'const t = `${a         }`')
 })
+
+test('a regular expression after a control-flow condition is not a comment (#49 review)', async () => {
+  const version = AURORA_CONTRACT.find((entry) => entry.id === 'task-status-config-version')
+  assert.ok(version)
+  const check = async (before: string) => (await checkDrift([version], '/checkout', async () => `${before}\n${version.source}\n`)).length
+  assert.equal(await check('if (input) /[/*]/.test(input)'), 0, 'after if')
+  assert.equal(await check('while (f(x)) /[/*]/.exec(x)'), 0, 'after while with a nested call')
+  assert.equal(await check('for (const a of b) /[/*]/.test(a)'), 0, 'after for')
+  assert.equal(stripComments('const r = (a) / 2 /* c */'), 'const r = (a) / 2        ')
+  assert.equal(stripComments('const r = f(a) / g(b) // c'), 'const r = f(a) / g(b)     ')
+})
