@@ -95,14 +95,19 @@ jobs:
             const read = (file) => fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim() : '(no output)'
             const title = 'AuroraCloud drift detected'
             const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
-            // The smoke report never holds workspace records (scripts/auroracloudLiveSmoke.test.mjs checks this).
+            // This repository is public. Only the smoke's own one-line summary is
+            // published (it never holds upstream messages or workspace records,
+            // scripts/auroracloudLiveSmoke.test.mjs checks this), not the raw transcript.
+            const smokeLines = read('smoke-report.txt').split('\n')
+              .filter((line) => /^(AuroraCloud MCP live smoke|Live smoke tool|AURORA_[A-Z_]+ )/.test(line))
+            const smoke = smokeLines.length ? smokeLines.slice(-5).join('\n') : '(no summary line; see the run log)'
             const body = [
               `The scheduled drift check failed on ${new Date().toISOString().slice(0, 10)}. Run: ${run}`,
               '',
               `**Contract check:** ${'${{ steps.contract.outcome }}'}`,
               '```', read('drift-report.txt'), '```',
               `**Extended live smoke:** ${'${{ steps.smoke.outcome }}'}`,
-              '```', read('smoke-report.txt').slice(-4000), '```',
+              '```', smoke, '```',
             ].join('\n')
             const { data: open } = await github.rest.issues.listForRepo({ ...context.repo, state: 'open', per_page: 100 })
             const existing = open.find((issue) => issue.title === title && !issue.pull_request)

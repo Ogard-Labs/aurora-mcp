@@ -18,6 +18,30 @@ type LiveSmokeDependencies = ReadOnlyDispatcher & {
   getToolDefinitions(): Array<{ name: string }>
 }
 
+/** A failure this smoke wrote itself: its message names only tools, settings and sanitized tool errors. */
+export class SmokeError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SmokeError'
+  }
+}
+
+/**
+ * The one line the smoke prints on failure. The repository and its workflow
+ * logs are public, and the drift job copies this into an issue, so anything
+ * the smoke did not write itself (an upstream HTTP error, say) is reduced to
+ * its status and code, never its message.
+ */
+export function smokeFailureSummary(error: unknown): string {
+  if (error instanceof SmokeError) return error.message
+  if (error instanceof Error && error.name === 'AuroraApiError') {
+    const { status, code } = error as Error & { status?: unknown; code?: unknown }
+    const detail = typeof code === 'string' && /^[a-z0-9_]{1,64}$/.test(code) ? ` (${code})` : ''
+    return `AuroraCloud MCP live smoke failed: AuroraCloud answered HTTP ${typeof status === 'number' ? status : 'error'}${detail}.`
+  }
+  return `AuroraCloud MCP live smoke failed unexpectedly (${error instanceof Error && /^\w{1,64}$/.test(error.name) ? error.name : 'unknown error'}).`
+}
+
 export const LIVE_SMOKE_TOOL_NAMES = ['list_workspaces', 'get_project_context'] as const
 
 /**
@@ -27,7 +51,8 @@ export const LIVE_SMOKE_TOOL_NAMES = ['list_workspaces', 'get_project_context'] 
  */
 export const EXTENDED_SMOKE_CHECKS = [
   { tool: 'list_task_lists', input: {}, resultType: 'task_lists' },
-  { tool: 'list_task_statuses', input: {}, resultType: 'task_statuses' },
+  // A status config newer than this server reads falls back to the built-ins: that is drift.
+  { tool: 'list_task_statuses', input: {}, resultType: 'task_statuses', refuse: { key: 'source', value: 'unsupported' } },
   { tool: 'list_objects', input: { limit: 5 }, resultType: 'objects' },
   { tool: 'wiki_search', input: { query: 'aurora', limit: 3 }, resultType: 'knowledge_sources' },
 ] as const
@@ -45,7 +70,7 @@ export async function executeReadOnlyTool(
   context: AuroraConnectionContext,
 ): Promise<ToolResult> {
   if (dependencies.getToolEffect(name) !== 'read') {
-    throw new Error(`Live smoke tool is not authoritatively classified as read-only: ${name}`)
+    throw new SmokeError(`Live smoke tool is not authoritatively classified as read-only: ${name}`)
   }
   return dependencies.executeToolCall(name, input, context)
 }
@@ -64,29 +89,32 @@ export async function runLiveSmoke(options: LiveSmokeOptions = {}): Promise<void
 
   const tools = dependencies.getToolDefinitions()
   if (tools.length < 1) {
-    throw new Error('AuroraCloud MCP live smoke could not list tools.')
+    throw new SmokeError('AuroraCloud MCP live smoke could not list tools.')
   }
 
   for (const requiredTool of LIVE_SMOKE_TOOL_NAMES) {
     if (!tools.some((tool) => tool.name === requiredTool)) {
-      throw new Error(`AuroraCloud MCP live smoke could not find required tool: ${requiredTool}`)
+      throw new SmokeError(`AuroraCloud MCP live smoke could not find required tool: ${requiredTool}`)
     }
   }
 
   const discovered = await executeReadOnlyTool(dependencies, LIVE_SMOKE_TOOL_NAMES[0], {}, context)
   if (discovered.type !== 'workspaces' || !Array.isArray(discovered['workspaces'])) {
-    throw new Error(`AuroraCloud MCP live smoke could not list granted workspaces: ${failureSummary(discovered)}`)
+    throw new SmokeError(`AuroraCloud MCP live smoke could not list granted workspaces: ${failureSummary(discovered)}`)
   }
 
   if (optionalEnv(env, 'AURORA_SMOKE_EXTENDED') === '1') {
     const workspaceId = selectSmokeWorkspace(env, context, discovered['workspaces'])
     for (const check of EXTENDED_SMOKE_CHECKS) {
       if (!tools.some((tool) => tool.name === check.tool)) {
-        throw new Error(`AuroraCloud MCP live smoke could not find required tool: ${check.tool}`)
+        throw new SmokeError(`AuroraCloud MCP live smoke could not find required tool: ${check.tool}`)
       }
       const result = await executeReadOnlyTool(dependencies, check.tool, { workspace_id: workspaceId, ...check.input }, context)
       if (result.type !== check.resultType) {
-        throw new Error(`AuroraCloud MCP live smoke ${check.tool} failed: ${failureSummary(result)}`)
+        throw new SmokeError(`AuroraCloud MCP live smoke ${check.tool} failed: ${failureSummary(result)}`)
+      }
+      if ('refuse' in check && result[check.refuse.key] === check.refuse.value) {
+        throw new SmokeError(`AuroraCloud MCP live smoke ${check.tool} failed: ${check.refuse.key} is ${check.refuse.value}`)
       }
     }
   }
@@ -102,7 +130,7 @@ export async function runLiveSmoke(options: LiveSmokeOptions = {}): Promise<void
       source_limit: 10,
     }, context)
     if (project.type !== 'project_context' || project['status'] !== 'ok') {
-      throw new Error(`AuroraCloud MCP live smoke could not get project context: ${failureSummary(project)}`)
+      throw new SmokeError(`AuroraCloud MCP live smoke could not get project context: ${failureSummary(project)}`)
     }
   }
 
@@ -123,7 +151,7 @@ function requireEnv(
 ): string {
   const value = env[key]?.trim()
   if (!value) {
-    throw new Error(`${key} is required.`)
+    throw new SmokeError(`${key} is required.`)
   }
   return value
 }
@@ -131,7 +159,7 @@ function requireEnv(
 function requireMcpToken(env: NodeJS.ProcessEnv | Record<string, string | undefined>): string {
   const token = requireEnv(env, 'AURORA_API_TOKEN')
   if (!token.startsWith('aur_mcp_client_') && !token.startsWith('aur_mcp_')) {
-    throw new Error('AURORA_API_TOKEN must start with aur_mcp_ or aur_mcp_client_.')
+    throw new SmokeError('AURORA_API_TOKEN must start with aur_mcp_ or aur_mcp_client_.')
   }
   return token
 }
@@ -147,7 +175,7 @@ function requireLegacyWorkspaceId(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
 ): string {
   const workspaceId = optionalEnv(env, 'AURORA_WORKSPACE_ID')
-  if (!workspaceId) throw new Error('AURORA_WORKSPACE_ID is required for legacy credentials.')
+  if (!workspaceId) throw new SmokeError('AURORA_WORKSPACE_ID is required for legacy credentials.')
   return workspaceId
 }
 
@@ -159,16 +187,16 @@ function selectSmokeWorkspace(
   if (context.kind === 'legacy_workspace') return context.defaultWorkspaceId
 
   const workspaces = discovered.filter(isGrantedWorkspace)
-  if (workspaces.length < 1) throw new Error('AuroraCloud MCP live smoke found no granted workspaces.')
+  if (workspaces.length < 1) throw new SmokeError('AuroraCloud MCP live smoke found no granted workspaces.')
   const requestedId = optionalEnv(env, 'AURORA_SMOKE_WORKSPACE_ID')
   if (requestedId) {
     if (!workspaces.some((workspace) => workspace.workspaceId === requestedId)) {
-      throw new Error('AURORA_SMOKE_WORKSPACE_ID does not match a discovered workspace grant.')
+      throw new SmokeError('AURORA_SMOKE_WORKSPACE_ID does not match a discovered workspace grant.')
     }
     return requestedId
   }
   if (workspaces.length !== 1) {
-    throw new Error('AURORA_SMOKE_WORKSPACE_ID is required when the client has multiple workspace grants.')
+    throw new SmokeError('AURORA_SMOKE_WORKSPACE_ID is required when the client has multiple workspace grants.')
   }
   return workspaces[0]!.workspaceId
 }

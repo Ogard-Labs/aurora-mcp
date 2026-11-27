@@ -6,7 +6,9 @@ import {
   LIVE_SMOKE_TOOL_NAMES,
   executeReadOnlyTool,
   runLiveSmoke,
+  smokeFailureSummary,
 } from './auroracloudLiveSmokeCore.js'
+import { AuroraApiError } from '../src/errors.js'
 
 const clientEnv = {
   AURORA_API_URL: 'https://api.example.test',
@@ -287,4 +289,30 @@ test('the extended smoke refuses a tool that is not classified read-only (#49)',
     /not authoritatively classified as read-only: list_objects/,
   )
   assert.equal(extended.calls.some((call) => call.name === 'list_objects'), false)
+})
+
+test('the extended smoke fails when the workspace status config is newer than this server reads (#49)', async () => {
+  extended = { calls: [] }
+  const { dependencies } = extendedDependencies({ ...EXTENDED_RESULTS, list_task_statuses: { type: 'task_statuses', statuses: ['Todo'], source: 'unsupported' } })
+  await assert.rejects(
+    runLiveSmoke({ env: { ...clientEnv, AURORA_SMOKE_EXTENDED: '1' }, loadDependencies: async () => dependencies, writeOutput() {} }),
+    /list_task_statuses failed: source is unsupported/,
+  )
+})
+
+test('a failure the smoke did not write is printed as its status and code only, never its upstream message (#49)', async () => {
+  const base = successfulDependencies()
+  base.dependencies.authenticate = async () => {
+    throw new AuroraApiError(401, 'invalid_token', 'Token for Private Workspace Title belongs to someone@example.com')
+  }
+  let caught
+  await assert.rejects(
+    runLiveSmoke({ env: clientEnv, loadDependencies: async () => base.dependencies, writeOutput() {} }),
+    (error) => { caught = error; return true },
+  )
+  const line = smokeFailureSummary(caught)
+  assert.equal(line, 'AuroraCloud MCP live smoke failed: AuroraCloud answered HTTP 401 (invalid_token).')
+  assert.doesNotMatch(line, /Private Workspace|example\.com/)
+  assert.equal(smokeFailureSummary(new Error('secret detail')), 'AuroraCloud MCP live smoke failed unexpectedly (Error).')
+  assert.match(smokeFailureSummary(new Error('x')), /^AuroraCloud MCP live smoke failed unexpectedly/)
 })
