@@ -29,6 +29,10 @@ const OBJECT_AFTER_WORD = new RegExp(String.raw`${NOT_NAME}(?:return|typeof|inst
 // The head of a function or class, up to its `(` or `{`.
 const FUNCTION_HEAD = new RegExp(String.raw`${NOT_NAME}(?:async\s+)?function\s*(?:\*\s*)?(?:${NAME}+\s*)?$`, 'u')
 const CLASS_HEAD = new RegExp(String.raw`${NOT_NAME}class(?:\s+(?!extends(?!${NAME}))${NAME}+)?(?:\s+extends\s+[^{};]+?)?$`, 'u')
+// The built-in `String.raw` tag in any spelling: `String['raw']`,
+// `globalThis.String.raw`, or wrapped in parentheses.
+const RAW_REF = String.raw`(?:globalThis\s*\.\s*)?String\s*(?:\.\s*raw|\[\s*(?:'raw'|"raw")\s*\])`
+const RAW_TAG = new RegExp(String.raw`(?:^|[^.\p{ID_Continue}$])(?:${RAW_REF}|\(\s*${RAW_REF}\s*\))$`, 'u')
 const CONTROL_BEFORE_PAREN = new RegExp(String.raw`${NOT_NAME}(?:if|while|for|with)\s*$`, 'u')
 const NUMBER_DOT = new RegExp(String.raw`(?:^|(?!${NAME}|\.)[^])\d[\d_]*\.\s*$`, 'u')
 const ENDS_WITH_NAME = new RegExp(`${NAME}$`, 'u')
@@ -129,7 +133,7 @@ export function scanSource(source) {
   // route may differ from its template; `String.raw` keeps the text.
   const taggedByOther = () => {
     const before = out.replace(/\s+$/, '')
-    if (/(?:^|[^.\p{ID_Continue}$])String\s*\.\s*raw$/u.test(before)) return false
+    if (RAW_TAG.test(before)) return false
     if (ENDS_WITH_NAME.test(before)) return !endsWithKeyword(before, REGEX_AFTER_WORD)
     if (before.endsWith(')')) return !closedControl
     return before.endsWith(']')

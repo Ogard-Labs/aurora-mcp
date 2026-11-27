@@ -345,15 +345,17 @@ test('a slash after a TypeScript non-null assertion divides (#49 review)', async
 test('a route template matches untagged or after String.raw, not after another tag (#49 review)', async () => {
   const route = AURORA_CONTRACT.find((entry) => entry.id === 'route-project-context')
   assert.ok(route)
-  for (const tag of ['String.raw', 'String.raw ', 'return ', 'app.get(', '']) {
-    const text = `const path = ${tag}${route.source}\n`
-    assert.deepEqual(await checkDrift([route], '/checkout', async () => text), [], tag)
-  }
+  const kept = [
+    ...['String.raw', 'String.raw ', '(String.raw)', "String['raw']", 'String["raw"]', 'globalThis.String.raw', '( globalThis.String.raw )', ''].map((tag) => `const path = ${tag}${route.source}`),
+    `function path(prefix: string) { return ${route.source} }`,
+    `app.get(${route.source}, handler)`,
+  ]
+  for (const text of kept) assert.deepEqual(await checkDrift([route], '/checkout', async () => `${text}\n`), [], text)
   // After a loop or if header's `)`, a template is not tagged.
   const loop = `for (const prefix of ['/mcp'] as const)\n  ${route.source}\n`
   assert.deepEqual(await checkDrift([route], '/checkout', async () => loop), [])
   // Any other tag can rewrite the path, so it is not proof the route is unchanged.
-  for (const tag of ['versioned', 'versioned ', 'api.path', 'tags[0]', 'makeTag()']) {
+  for (const tag of ['versioned', 'versioned ', 'api.path', 'tags[0]', 'makeTag()', 'my.String.raw', "String['rawer']"]) {
     const text = `const path = ${tag}${route.source}\n`
     assert.equal((await checkDrift([route], '/checkout', async () => text)).length, 1, tag)
   }
