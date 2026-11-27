@@ -130,11 +130,55 @@ function resultSchema(
 const SAFE_ERROR_SCHEMA = resultSchema('error', {
   code: {
     type: 'string',
-    enum: ['invalid_input', 'authentication_failed', 'permission_denied', 'not_found', 'rate_limited', 'network_error', 'server_error'],
+    enum: ['invalid_input', 'authentication_failed', 'permission_denied', 'not_found', 'conflict', 'rate_limited', 'network_error', 'server_error'],
   },
   message: stringSchema,
   retryable: { type: 'boolean' },
+  current_updated_at: stringSchema,
+  saved_fields: { type: 'array', items: stringSchema },
+  partly_saved_fields: { type: 'array', items: stringSchema },
 }, ['code', 'message', 'retryable'])
+
+const DRY_RUN_SCHEMA = resultSchema('dry_run', {
+  id: stringSchema,
+  title: {
+    type: 'object',
+    properties: { old: nullableStringSchema, new: stringSchema },
+    required: ['old', 'new'],
+    additionalProperties: false,
+  },
+  content: {
+    type: 'object',
+    properties: {
+      old_blocks: { type: 'integer' },
+      new_blocks: { type: 'integer' },
+      old_chars: { type: 'integer' },
+      new_chars: { type: 'integer' },
+      first_changed_lines: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: { line: { type: 'integer' }, old: nullableStringSchema, new: nullableStringSchema },
+          required: ['line', 'old', 'new'],
+          additionalProperties: false,
+        },
+      },
+      replaced_formatting: { type: 'array', items: stringSchema },
+    },
+    required: ['old_blocks', 'new_blocks', 'old_chars', 'new_chars', 'first_changed_lines', 'replaced_formatting'],
+    additionalProperties: false,
+  },
+}, ['id'])
+
+const EXPECTED_UPDATED_AT_INPUT: JsonSchema = {
+  type: 'string',
+  description: 'Optional. The updated_at that get_object returned. If the object or its properties changed since, nothing is written and a conflict error is returned.',
+}
+
+const DRY_RUN_INPUT: JsonSchema = {
+  type: 'boolean',
+  description: 'Optional. When true, nothing is written; the result shows what would change.',
+}
 
 const OBJECT_SUMMARY_SCHEMA: JsonObjectSchema = {
   type: 'object',
@@ -623,6 +667,7 @@ const RESULT_SCHEMAS: Readonly<Record<string, JsonObjectSchema[]>> = {
   wiki_recent: [resultSchema('knowledge_sources', { sources: { type: 'array', items: KNOWLEDGE_SOURCE_SCHEMA } }, ['sources'])],
   get_object: [resultSchema('object', {
     object: OBJECT_SUMMARY_SCHEMA,
+    updated_at: stringSchema,
     availability: { type: 'string', enum: ['available', 'empty', 'encrypted_locked', 'permission_denied', 'not_found', 'unavailable'] },
     content: nullableStringSchema,
     properties: { type: 'object', additionalProperties: stringSchema },
@@ -642,6 +687,7 @@ const RESULT_SCHEMAS: Readonly<Record<string, JsonObjectSchema[]>> = {
     computed_properties_status: { type: 'string', enum: ['complete', 'unavailable'] },
   }, [
     'object',
+    'updated_at',
     'availability',
     'content',
     'properties',
@@ -782,8 +828,9 @@ const RESULT_SCHEMAS: Readonly<Record<string, JsonObjectSchema[]>> = {
   update_object: [
     resultSchema('object_updated', { id: stringSchema, changed_fields: { type: 'array', items: stringSchema } }, ['id', 'changed_fields']),
     resultSchema('no_op', { message: stringSchema }, ['message']),
+    DRY_RUN_SCHEMA,
   ],
-  set_content: [resultSchema('content_set', { id: stringSchema }, ['id'])],
+  set_content: [resultSchema('content_set', { id: stringSchema }, ['id']), DRY_RUN_SCHEMA],
   append_block: [resultSchema('content_appended', { id: stringSchema }, ['id'])],
   set_property: [resultSchema('property_set', {
     objectId: stringSchema,
@@ -1228,6 +1275,7 @@ const TOOL_DEFINITIONS: McpToolDeclaration[] = [
         task_list: { type: 'string', description: 'Task list name/ID or empty to clear' },
         labels: { oneOf: [{ type: 'array', items: { type: 'string' } }, { type: 'string' }], description: 'Labels or empty to clear' },
         description: { type: 'string', description: 'Task description or empty to clear' },
+        expected_updated_at: EXPECTED_UPDATED_AT_INPUT,
       },
       required: ['id'],
     },
@@ -1254,6 +1302,8 @@ const TOOL_DEFINITIONS: McpToolDeclaration[] = [
         title: { type: 'string', description: 'Optional new title' },
         text: { type: 'string', description: 'Optional plain text content to replace the existing content' },
         content: { type: 'string', description: 'Alias for text' },
+        expected_updated_at: EXPECTED_UPDATED_AT_INPUT,
+        dry_run: DRY_RUN_INPUT,
       },
       required: ['id'],
     },
@@ -1266,6 +1316,8 @@ const TOOL_DEFINITIONS: McpToolDeclaration[] = [
       properties: {
         id: { type: 'string', description: 'The object ID' },
         text: { type: 'string', description: 'Plain text content (newlines become paragraphs)' },
+        expected_updated_at: EXPECTED_UPDATED_AT_INPUT,
+        dry_run: DRY_RUN_INPUT,
       },
       required: ['id'],
     },
@@ -1293,6 +1345,7 @@ const TOOL_DEFINITIONS: McpToolDeclaration[] = [
         key: { type: 'string', description: 'Property key/name' },
         value_type: { type: 'string', description: 'Value type: text, date, number, boolean' },
         value: { type: 'string', description: 'The value to set' },
+        expected_updated_at: EXPECTED_UPDATED_AT_INPUT,
       },
       required: ['object_id', 'key', 'value_type', 'value'],
     },

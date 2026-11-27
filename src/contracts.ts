@@ -19,12 +19,19 @@ export type ToolErrorCode =
   | 'rate_limited'
   | 'network_error'
   | 'server_error'
+  | 'conflict'
 
 export type ToolErrorResult = {
   type: 'error'
   code: ToolErrorCode
   message: string
   retryable: boolean
+  /** On `conflict` (#51): the object's `updated_at` now, to read again before retrying. */
+  current_updated_at?: string
+  /** On `conflict` (#51): the fields an edit had already saved before the conflict stopped it. */
+  saved_fields?: string[]
+  /** On `conflict` (#51): fields stored in more than one row, some of which were saved. */
+  partly_saved_fields?: string[]
 }
 
 export type GrantedWorkspace = {
