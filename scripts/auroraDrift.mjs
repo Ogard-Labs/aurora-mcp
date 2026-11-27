@@ -375,11 +375,16 @@ const skipSpace = (text) => text.replace(/^(?:\s|\/\/[^\n]*|\/\*(?:[^*]|\*(?!\/)
 function skipRightAssertions(rest) {
   let code = skipSpace(rest)
   for (;;) {
-    if (/^!(?!=)/.test(code)) { code = skipSpace(code.slice(1)); continue }
+    // TypeScript reads `!`, `as` and `satisfies` as assertions only on the same line;
+    // after a line break they start a new statement (an `as:` label, say).
+    if (/\n/.test(rest.slice(0, rest.length - code.length))) return code
+    rest = code
+    if (/^!(?!=)/.test(code)) { rest = code.slice(1); code = skipSpace(rest); continue }
     const keyword = new RegExp(String.raw`^(?:as|satisfies)(?!${NAME})\s*`, 'u').exec(code)
     if (!keyword) return code
     const after = skipType(code.slice(keyword[0].length))
     if (after === null) return null
+    rest = after
     code = skipSpace(after)
   }
 }
@@ -409,8 +414,13 @@ function skipType(text) {
   let code = text
   for (;;) {
     code = code.replace(/^\s*(?:(?:keyof|typeof|readonly|unique)\s+)*/, '')
-    const simple = new RegExp(String.raw`^(?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|\x60(?:[^\x60\\$]|\\.|\$(?!\{)|\$\{[^{}\x60]*\})*\x60|-?\d[\d_.]*|${NAME}+(?:\s*\.\s*${NAME}+)*)`, 'u').exec(code)
+    const simple = new RegExp(String.raw`^(?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|-?\d[\d_.]*|${NAME}+(?:\s*\.\s*${NAME}+)*)`, 'u').exec(code)
     if (simple) code = code.slice(simple[0].length)
+    else if (code.startsWith('\x60')) {
+      const close = closeTemplateType(code)
+      if (close < 0) return null
+      code = code.slice(close)
+    }
     else if (/^[([{]/.test(code)) {
       const close = closeBracket(code)
       if (close < 0) return null
@@ -428,6 +438,32 @@ function skipType(text) {
     if (!union) return code
     code = code.slice(union[0].length)
   }
+}
+
+/** The index just past the template literal type that opens at `text[0]`, nested templates included, or -1. */
+function closeTemplateType(text) {
+  for (let i = 1; i < text.length; i += 1) {
+    if (text[i] === '\\') i += 1
+    else if (text[i] === '\x60') return i + 1
+    else if (text[i] === '$' && text[i + 1] === '{') {
+      let depth = 1
+      for (i += 2; i < text.length && depth > 0; i += 1) {
+        if (text[i] === '{') depth += 1
+        else if (text[i] === '}') depth -= 1
+        else if (text[i] === "'" || text[i] === '"') {
+          const quote = text[i]
+          for (i += 1; i < text.length && text[i] !== quote; i += text[i] === '\\' ? 2 : 1);
+        } else if (text[i] === '\x60') {
+          const inner = closeTemplateType(text.slice(i))
+          if (inner < 0) return -1
+          i += inner - 1
+        }
+      }
+      if (depth > 0) return -1
+      i -= 1
+    }
+  }
+  return -1
 }
 
 /** Whether code that ends `before` (comments are already blanked, assertions skipped) joins an operator to the operand after it. `=>` does not. */
