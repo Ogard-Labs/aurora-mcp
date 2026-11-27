@@ -69,17 +69,15 @@ still be there. The code reads these values from the contract file, not from
 its own copies. When Aurora changes one, change the value, the entry and its
 users together.
 
-`node --import tsx scripts/auroraDrift.mjs --auroradocs <checkout>` checks a
-read-only auroradocs checkout and names each entry that no longer matches. It
-is not part of `pnpm check`, which stays offline. The `AuroraCloud drift`
-workflow runs it weekly and on demand, together with the extended live smoke,
-and opens or updates one "AuroraCloud drift detected" issue when either fails.
-It reads auroradocs with a short-lived token from a GitHub App that has
-read-only Contents access to that repository only (`AURORADOCS_READER_APP_ID`
-variable, `AURORADOCS_READER_PRIVATE_KEY` secret, in the `production-smoke`
-environment). If that token or checkout fails, the issue says so and the live
-smoke still runs. The smoke's settings, `AURORA_SMOKE_WORKSPACE_ID` included,
-are secrets in the same environment, because the workflow logs are public.
+`pnpm drift --auroradocs <checkout>` checks a read-only auroradocs checkout and
+names each entry that no longer matches. It is not part of `pnpm check`, which
+stays offline, and it runs by hand only: this public repository holds no
+credential for the private auroradocs repository. Run it before a release and
+whenever auroradocs changes a task, status, object-type or knowledge shape.
+The `AuroraCloud drift` workflow runs the extended read-only live smoke on
+demand and opens or updates one "AuroraCloud drift detected" issue when it
+fails. The smoke's settings, `AURORA_SMOKE_WORKSPACE_ID` included, are secrets
+in the `production-smoke` environment, because the workflow logs are public.
 
 Pass credentials through your protected local environment, never a committed
 file or recorded shell command. Do not preserve raw smoke output in the
