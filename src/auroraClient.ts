@@ -7,6 +7,7 @@
  */
 import type { AuroraConnectionContext, ContentReadResult, GrantedWorkspace } from './contracts.js'
 import { AuroraApiError, ToolConflictError, ToolInputError, ToolNotFoundError } from './errors.js'
+import { auroraRoute, TASK_PROPERTY_KEYS as KEYS } from './auroraContract.js'
 import { isHiddenSystemObjectType, uncreatableObjectTypeReason } from './objectTypes.js'
 import type {
   CustomDatabaseTemplateDefault,
@@ -209,7 +210,7 @@ export type AuthenticateOptions = {
 }
 
 export async function listGrantedWorkspaces(): Promise<GrantedWorkspace[]> {
-  const response = await getAuroraClient().request<{ items?: unknown }>('/api/mcp/workspaces', { method: 'GET' })
+  const response = await getAuroraClient().request<{ items?: unknown }>(auroraRoute('mcpWorkspaces'), { method: 'GET' })
   if (!Array.isArray(response.items)) throw new Error('Invalid granted workspace response')
   return response.items.map((item) => mapGrantedWorkspace(item))
 }
@@ -678,7 +679,7 @@ export type AuroraImportCapabilities = {
 
 export async function getAuroraImportCapabilities(workspaceId: string): Promise<AuroraImportCapabilities> {
   const response = await getAuroraClient().request<Partial<AuroraImportCapabilities>>(
-    `/api/mcp/workspaces/${encodeURIComponent(workspaceId)}/import-capabilities`,
+    auroraRoute('importCapabilities', { workspaceId: encodeURIComponent(workspaceId) }),
     { method: 'GET' },
   )
   if (
@@ -887,7 +888,7 @@ export async function searchWorkspaceKnowledgeServer(
   if (!trimmedWorkspaceId || !trimmedQuery) return []
 
   const payload = await getAuroraClient().request<Partial<WorkspaceKnowledgeResponse>>(
-    `/api/knowledge/workspaces/${trimmedWorkspaceId}/search?q=${encodeURIComponent(trimmedQuery)}&limit=${Math.max(1, Math.min(50, limit))}`,
+    `${auroraRoute('knowledgeSearch', { workspaceId: trimmedWorkspaceId })}?q=${encodeURIComponent(trimmedQuery)}&limit=${Math.max(1, Math.min(50, limit))}`,
     { method: 'GET' },
   )
   return normalizeWorkspaceKnowledgeResponse(payload).items
@@ -903,7 +904,7 @@ export async function getWorkspaceKnowledgeObjectServer(
   if (!trimmedWorkspaceId || !trimmedObjectId) return null
 
   const payload = await getAuroraClient().request<Partial<WorkspaceKnowledgeResponse>>(
-    `/api/knowledge/workspaces/${trimmedWorkspaceId}/objects/${trimmedObjectId}`,
+    auroraRoute('knowledgeObject', { workspaceId: trimmedWorkspaceId, objectId: trimmedObjectId }),
     { method: 'GET' },
   )
   const source = normalizeWorkspaceKnowledgeResponse(payload).items[0] ?? null
@@ -921,7 +922,7 @@ export async function listWorkspaceRelatedKnowledgeServer(
   if (!trimmedWorkspaceId || !trimmedObjectId) return []
 
   const payload = await getAuroraClient().request<Partial<WorkspaceKnowledgeResponse>>(
-    `/api/knowledge/workspaces/${trimmedWorkspaceId}/related/${trimmedObjectId}?limit=${Math.max(1, Math.min(10, limit))}`,
+    `${auroraRoute('knowledgeRelated', { workspaceId: trimmedWorkspaceId, objectId: trimmedObjectId })}?limit=${Math.max(1, Math.min(10, limit))}`,
     { method: 'GET' },
   )
   return normalizeWorkspaceKnowledgeResponse(payload).items
@@ -935,7 +936,7 @@ export async function listWorkspaceRecentKnowledgeServer(
   if (!trimmedWorkspaceId) return []
 
   const payload = await getAuroraClient().request<Partial<WorkspaceKnowledgeResponse>>(
-    `/api/knowledge/workspaces/${trimmedWorkspaceId}/recent?limit=${Math.max(1, Math.min(10, limit))}`,
+    `${auroraRoute('knowledgeRecent', { workspaceId: trimmedWorkspaceId })}?limit=${Math.max(1, Math.min(10, limit))}`,
     { method: 'GET' },
   )
   return normalizeWorkspaceKnowledgeResponse(payload).items
@@ -1331,13 +1332,13 @@ export function propsToTaskProps(props: AuroraPropertyRecord[], objectId: string
   const get = (key: string) => props.find((p) => p.object_id === objectId && p.key === key)
 
   return {
-    status: get('status')?.value_text ?? null,
-    priority: get('priority')?.value_text ?? null,
-    due_date: get('due_date')?.value_date ?? get('due_date')?.value_text ?? null,
-    assignees: taskAssignees(get('assignee')?.value_text, get('assignees')?.value_text),
-    labels: parseTaskListProperty(get('tags')?.value_text, get('labels')?.value_text),
-    description: get('description')?.value_text ?? null,
-    task_list_id: get('task_list_id')?.value_text ?? get('task_list_id')?.value_ref ?? null,
+    status: get(KEYS.status)?.value_text ?? null,
+    priority: get(KEYS.priority)?.value_text ?? null,
+    due_date: get(KEYS.dueDate)?.value_date ?? get(KEYS.dueDate)?.value_text ?? null,
+    assignees: taskAssignees(get(KEYS.assignee)?.value_text, get('assignees')?.value_text),
+    labels: parseTaskListProperty(get(KEYS.tags)?.value_text, get(KEYS.labels)?.value_text),
+    description: get(KEYS.description)?.value_text ?? null,
+    task_list_id: get(KEYS.taskListId)?.value_text ?? get(KEYS.taskListId)?.value_ref ?? null,
   }
 }
 
@@ -1380,10 +1381,10 @@ export function taskAssignees(assignee: string | null | undefined, legacyAssigne
  */
 export function taskPatchRefusal(patch: Partial<AuroraTaskProps>, records: readonly AuroraPropertyRecord[]): string | null {
   const encrypted = (...keys: string[]) => keys.some((key) => isEncryptedMetadataValue(records.find((record) => record.key === key)?.value_text))
-  if (patch.assignees !== undefined && encrypted('assignee', 'assignees')) {
+  if (patch.assignees !== undefined && encrypted(KEYS.assignee, 'assignees')) {
     return "This task's assignees are end-to-end encrypted, so the MCP server cannot change them. Change them in Aurora."
   }
-  if (patch.labels !== undefined && encrypted('tags', 'labels')) {
+  if (patch.labels !== undefined && encrypted(KEYS.tags, KEYS.labels)) {
     return "This task's labels are end-to-end encrypted, so the MCP server cannot change them. Change them in Aurora."
   }
   return null
@@ -1419,11 +1420,11 @@ export async function updateTaskProps(
   // undefined => skip, null/'' => clear (set value field to null), otherwise => set
   type Triple = { key: string; valueType: string; value: string | number | boolean | null }
   const triples: Triple[] = []
-  if (patch.priority !== undefined) triples.push({ key: 'priority', valueType: 'text', value: patch.priority })
-  if (patch.due_date !== undefined) triples.push({ key: 'due_date', valueType: 'date', value: patch.due_date })
-  if (patch.description !== undefined) triples.push({ key: 'description', valueType: 'text', value: patch.description })
+  if (patch.priority !== undefined) triples.push({ key: KEYS.priority, valueType: 'text', value: patch.priority })
+  if (patch.due_date !== undefined) triples.push({ key: KEYS.dueDate, valueType: 'date', value: patch.due_date })
+  if (patch.description !== undefined) triples.push({ key: KEYS.description, valueType: 'text', value: patch.description })
   // Aurora stores the list id as text (auroradocs tasks.ts); a ref would not be read back by the app.
-  if (patch.task_list_id !== undefined) triples.push({ key: 'task_list_id', valueType: 'text', value: patch.task_list_id })
+  if (patch.task_list_id !== undefined) triples.push({ key: KEYS.taskListId, valueType: 'text', value: patch.task_list_id })
 
   if (!triples.length && patch.assignees === undefined && patch.labels === undefined && patch.status === undefined) return
 
@@ -1462,11 +1463,11 @@ export async function updateTaskProps(
   }
   if (patch.assignees !== undefined) {
     const assignees = normalizeTaskList(patch.assignees)
-    triples.push({ key: 'assignee', valueType: 'text', value: assignees.length ? assignees.join(',') : null })
+    triples.push({ key: KEYS.assignee, valueType: 'text', value: assignees.length ? assignees.join(',') : null })
     if (recordByKey.get('assignees')?.value_text) triples.push({ key: 'assignees', valueType: 'text', value: null })
   }
-  const legacyLabels = recordByKey.get('labels')?.value_text
-  const currentTags = recordByKey.get('tags')?.value_text
+  const legacyLabels = recordByKey.get(KEYS.labels)?.value_text
+  const currentTags = recordByKey.get(KEYS.tags)?.value_text
   // Older MCP JSON labels are merged into `tags`, as both the app and the MCP
   // read the two keys together, unless `tags` is end-to-end encrypted (left to the app).
   const labels = patch.labels !== undefined
@@ -1475,13 +1476,13 @@ export async function updateTaskProps(
       ? parseTaskListProperty(currentTags, legacyLabels)
       : null
   if (labels) {
-    triples.push({ key: 'tags', valueType: 'text', value: labels.length ? labels.join(',') : null })
-    if (legacyLabels) triples.push({ key: 'labels', valueType: 'text', value: null })
+    triples.push({ key: KEYS.tags, valueType: 'text', value: labels.length ? labels.join(',') : null })
+    if (legacyLabels) triples.push({ key: KEYS.labels, valueType: 'text', value: null })
   }
   // The status goes last: a conflict on any other field then stops the edit
   // before the task is marked done, so a recurring task is never left done
   // without its next occurrence.
-  if (patch.status !== undefined) triples.push({ key: 'status', valueType: 'text', value: patch.status })
+  if (patch.status !== undefined) triples.push({ key: KEYS.status, valueType: 'text', value: patch.status })
 
   const guarded = options.guardedProperties
   const seenRowByKey = new Map<string, AuroraPropertyRecord>()
@@ -1595,8 +1596,8 @@ export async function listPlanningTasks(workspaceId: string): Promise<AuroraPlan
       title: task.title,
       updated_at: task.updated_at,
       ...propsToTaskProps(props, task.id),
-      recurrence: props.find((prop) => prop.key === 'recurrence')?.value_text || null,
-      recurrence_next: props.find((prop) => prop.key === 'recurrence_next')?.value_text || null,
+      recurrence: props.find((prop) => prop.key === KEYS.recurrence)?.value_text || null,
+      recurrence_next: props.find((prop) => prop.key === KEYS.recurrenceNext)?.value_text || null,
     }
   })
 }

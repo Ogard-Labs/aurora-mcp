@@ -22,6 +22,7 @@
  * occurrence created here instead of removing it.
  */
 import { createHash } from 'node:crypto'
+import { RECURRENCE_SUCCESSOR_ID_LENGTH, RECURRENCE_SUCCESSOR_ID_SEED, TASK_PROPERTY_KEYS as KEYS } from './auroraContract.js'
 import {
   createObject,
   getAuroraClient,
@@ -41,7 +42,7 @@ export type RecurrenceAdvance =
 
 /** The id Aurora gives the occurrence that follows `sourceTaskId` on `occurrenceDate` (YYYY-MM-DD). */
 export function recurrenceSuccessorId(sourceTaskId: string, occurrenceDate: string): string {
-  return createHash('sha256').update(`task-recurrence:v1\n${sourceTaskId}\n${occurrenceDate}`).digest('hex').slice(0, 15)
+  return createHash('sha256').update(`${RECURRENCE_SUCCESSOR_ID_SEED}\n${sourceTaskId}\n${occurrenceDate}`).digest('hex').slice(0, RECURRENCE_SUCCESSOR_ID_LENGTH)
 }
 
 function datePart(value: string | null): string | null {
@@ -107,28 +108,28 @@ function successorDefaults(props: AuroraPropertyRecord[], status: string, dueDat
     return typeof value === 'string' && value.trim() ? value : null
   }
   const writes: PropertyWrite[] = [
-    { key: 'status', valueType: 'select', field: 'value_text', value: status },
-    { key: 'due_date', valueType: 'date', field: 'value_date', value: dueDate },
-    { key: 'recurrence', valueType: 'text', field: 'value_text', value: rule },
+    { key: KEYS.status, valueType: 'select', field: 'value_text', value: status },
+    { key: KEYS.dueDate, valueType: 'date', field: 'value_date', value: dueDate },
+    { key: KEYS.recurrence, valueType: 'text', field: 'value_text', value: rule },
   ]
-  const priority = text('priority')
-  if (priority) writes.push({ key: 'priority', valueType: 'select', field: 'value_text', value: priority })
+  const priority = text(KEYS.priority)
+  if (priority) writes.push({ key: KEYS.priority, valueType: 'select', field: 'value_text', value: priority })
   // Like the app, only the current `assignee` is carried over; see `taskAssignees`.
-  const assignees = parseList(get('assignee')?.value_text)
-  if (assignees.length) writes.push({ key: 'assignee', valueType: 'text', field: 'value_text', value: assignees.join(',') })
-  const tags = parseList(get('tags')?.value_text, get('labels')?.value_text)
-  if (tags.length) writes.push({ key: 'tags', valueType: 'text', field: 'value_text', value: tags.join(',') })
-  const description = text('description')
-  if (description) writes.push({ key: 'description', valueType: 'text', field: 'value_text', value: description })
-  const taskListId = get('task_list_id')?.value_text ?? get('task_list_id')?.value_ref ?? null
-  if (taskListId) writes.push({ key: 'task_list_id', valueType: 'text', field: 'value_text', value: taskListId })
+  const assignees = parseList(get(KEYS.assignee)?.value_text)
+  if (assignees.length) writes.push({ key: KEYS.assignee, valueType: 'text', field: 'value_text', value: assignees.join(',') })
+  const tags = parseList(get(KEYS.tags)?.value_text, get(KEYS.labels)?.value_text)
+  if (tags.length) writes.push({ key: KEYS.tags, valueType: 'text', field: 'value_text', value: tags.join(',') })
+  const description = text(KEYS.description)
+  if (description) writes.push({ key: KEYS.description, valueType: 'text', field: 'value_text', value: description })
+  const taskListId = get(KEYS.taskListId)?.value_text ?? get(KEYS.taskListId)?.value_ref ?? null
+  if (taskListId) writes.push({ key: KEYS.taskListId, valueType: 'text', field: 'value_text', value: taskListId })
   return writes
 }
 
 type RecurrenceMarker = { id?: unknown; fp?: unknown; state?: unknown }
 
 function readMarker(props: AuroraPropertyRecord[]): RecurrenceMarker | null {
-  const raw = props.find((prop) => prop.key === 'recurrence_next')?.value_text
+  const raw = props.find((prop) => prop.key === KEYS.recurrenceNext)?.value_text
   if (!raw) return null
   try {
     return JSON.parse(raw) as RecurrenceMarker
@@ -193,11 +194,11 @@ export async function advanceRecurrenceChain(
   if (!source || source.type !== 'task') return { kind: 'none' }
   const props = (await listProperties([sourceTaskId], workspaceId, { maxPages: 100 }))
     .filter((prop) => prop.object_id === sourceTaskId)
-  const ruleProp = props.find((prop) => prop.key === 'recurrence')
+  const ruleProp = props.find((prop) => prop.key === KEYS.recurrence)
   const rawRule = ruleProp?.value_text?.trim() ?? ''
   if (!rawRule) return { kind: 'none' }
   if (isEncryptedMetadataValue(rawRule) || isEncryptedMetadataValue(source.title)) return { kind: 'encrypted' }
-  const dueProp = props.find((prop) => prop.key === 'due_date')
+  const dueProp = props.find((prop) => prop.key === KEYS.dueDate)
   const next = nextRecurrenceDue(rawRule, dueProp?.value_date ?? dueProp?.value_text ?? null, now)
   if (!next) return { kind: 'none' }
 
@@ -241,11 +242,11 @@ export async function advanceRecurrenceChain(
   // fingerprint for undo) is kept as it is. An undone one is written live again.
   if (!markerNames(props, successorId)) {
     const marker = JSON.stringify({ id: successorId, date: next.date, rule: rawRule, fp: null, state: 'live' })
-    await writeProperty(sourceTaskId, props.find((prop) => prop.key === 'recurrence_next'), {
-      key: 'recurrence_next', valueType: 'text', field: 'value_text', value: marker,
+    await writeProperty(sourceTaskId, props.find((prop) => prop.key === KEYS.recurrenceNext), {
+      key: KEYS.recurrenceNext, valueType: 'text', field: 'value_text', value: marker,
     })
   }
   // Strip the rule from the completed task so completing it again can't re-fire.
-  await writeProperty(sourceTaskId, ruleProp, { key: 'recurrence', valueType: 'text', field: 'value_text', value: null })
+  await writeProperty(sourceTaskId, ruleProp, { key: KEYS.recurrence, valueType: 'text', field: 'value_text', value: null })
   return { kind, occurrenceId: successorId, dueDate: next.dueDate }
 }

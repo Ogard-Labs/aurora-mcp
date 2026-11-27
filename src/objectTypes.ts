@@ -14,7 +14,10 @@
  * them.
  */
 
-export const HIDDEN_SYSTEM_OBJECT_TYPES: ReadonlySet<string> = new Set(['workspace_config', 'task_list'])
+import { HIDDEN_SYSTEM_OBJECT_TYPE_LIST } from './auroraContract.js'
+
+/** From the AuroraCloud contract (src/auroraContract.ts, #49). */
+export const HIDDEN_SYSTEM_OBJECT_TYPES: ReadonlySet<string> = new Set(HIDDEN_SYSTEM_OBJECT_TYPE_LIST)
 
 export const RETIRED_OBJECT_TYPE_PREFIX = 'research_'
 

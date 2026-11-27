@@ -81,6 +81,7 @@ import type { McpCanvasReadResult, McpWeekPlan } from './planningTools.js'
 import { getMcpToolCoverageAudit, getMcpWorkflowRecipes } from './toolCatalog.js'
 import type { McpToolCoverageAudit, McpWorkflowRecipe } from './toolCatalog.js'
 import { readBoundedInteger, readWorkspaceSelector } from './input.js'
+import { TASK_PROPERTY_KEYS } from './auroraContract.js'
 import { ToolConflictError, ToolInputError, toSafeToolError } from './errors.js'
 import { isHiddenSystemObjectType, uncreatableObjectTypeReason } from './objectTypes.js'
 import { getProjectContext, listProjectChanges } from './projectContext.js'
@@ -1131,8 +1132,8 @@ async function executeToolCallUnsafe(
         const { obj, properties: props } = read
         if (obj.type !== 'task') return invalidInput(`${id} is not a task`)
         const taskProps = propsToTaskProps(props, id)
-        const recurrence = props.find((prop) => prop.key === 'recurrence')?.value_text || null
-        const recurrenceNext = props.find((prop) => prop.key === 'recurrence_next')?.value_text || null
+        const recurrence = props.find((prop) => prop.key === TASK_PROPERTY_KEYS.recurrence)?.value_text || null
+        const recurrenceNext = props.find((prop) => prop.key === TASK_PROPERTY_KEYS.recurrenceNext)?.value_text || null
         const row = toTaskRow(
           { id, title: obj.title, updated_at: obj.updated_at, ...taskProps, recurrence, recurrence_next: recurrenceNext },
           { statuses: statuses.judged, lists: snapshot.lists, members },

@@ -9,6 +9,17 @@
  * `workspace_config` object. Pure functions only; reading lives in auroraClient.
  */
 import { createHash } from 'node:crypto'
+import {
+  BUILTIN_TASK_STATUS_LIST,
+  E2EE_MARKER,
+  LEGACY_DONE_TASK_STATUS as CONTRACT_LEGACY_DONE_TASK_STATUS,
+  TASK_STATUS_CONFIG_PROPERTY_KEY as CONTRACT_TASK_STATUS_CONFIG_PROPERTY_KEY,
+  TASK_STATUS_CONFIG_VERSION as CONTRACT_TASK_STATUS_CONFIG_VERSION,
+  WORKSPACE_CONFIG_ID_CHARS,
+  WORKSPACE_CONFIG_ID_LENGTH,
+  WORKSPACE_CONFIG_ID_SEED,
+  WORKSPACE_CONFIG_OBJECT_TYPE as CONTRACT_WORKSPACE_CONFIG_OBJECT_TYPE,
+} from './auroraContract.js'
 
 export type TaskStatusGroup = 'todo' | 'inProgress' | 'done'
 
@@ -32,19 +43,15 @@ export type WorkspaceTaskStatuses = {
 }
 
 export const TASK_STATUS_GROUPS: readonly TaskStatusGroup[] = ['todo', 'inProgress', 'done']
-export const LEGACY_DONE_TASK_STATUS = 'Done'
-export const WORKSPACE_CONFIG_OBJECT_TYPE = 'workspace_config'
-export const TASK_STATUS_CONFIG_PROPERTY_KEY = 'task_statuses'
-export const TASK_STATUS_CONFIG_VERSION = 1
+// The values below come from the AuroraCloud contract (src/auroraContract.ts, #49).
+export const LEGACY_DONE_TASK_STATUS = CONTRACT_LEGACY_DONE_TASK_STATUS
+export const WORKSPACE_CONFIG_OBJECT_TYPE = CONTRACT_WORKSPACE_CONFIG_OBJECT_TYPE
+export const TASK_STATUS_CONFIG_PROPERTY_KEY = CONTRACT_TASK_STATUS_CONFIG_PROPERTY_KEY
+export const TASK_STATUS_CONFIG_VERSION = CONTRACT_TASK_STATUS_CONFIG_VERSION
 /** Prefix of an end-to-end encrypted metadata value (auroradocs `E2EE_MARKER`). */
-export const E2EE_METADATA_MARKER = '__e2ee__'
+export const E2EE_METADATA_MARKER = E2EE_MARKER
 
-export const BUILTIN_TASK_STATUSES: readonly TaskStatusDefinition[] = [
-  { id: 'Backlog', group: 'todo' },
-  { id: 'Todo', group: 'todo' },
-  { id: 'In Progress', group: 'inProgress' },
-  { id: LEGACY_DONE_TASK_STATUS, group: 'done' },
-]
+export const BUILTIN_TASK_STATUSES: readonly TaskStatusDefinition[] = BUILTIN_TASK_STATUS_LIST.map((status) => ({ ...status }))
 
 const LEGACY_GROUPS: Record<string, TaskStatusGroup> = { [LEGACY_DONE_TASK_STATUS]: 'done', 'In Progress': 'inProgress' }
 const MAX_ALIAS_HOPS = 8
@@ -63,10 +70,10 @@ function legacyGroup(statusId: string): TaskStatusGroup {
 
 /** The workspace config object's id: 15 characters of `[a-z0-9]` derived from the workspace id. */
 export function workspaceConfigObjectId(workspaceId: string): string {
-  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
-  const digest = createHash('sha256').update(`aurora:workspace-config:${workspaceId}`).digest()
+  const alphabet = WORKSPACE_CONFIG_ID_CHARS
+  const digest = createHash('sha256').update(`${WORKSPACE_CONFIG_ID_SEED}${workspaceId}`).digest()
   let id = ''
-  for (let index = 0; index < 15; index += 1) id += alphabet[digest[index]! % alphabet.length]
+  for (let index = 0; index < WORKSPACE_CONFIG_ID_LENGTH; index += 1) id += alphabet[digest[index]! % alphabet.length]
   return id
 }
 

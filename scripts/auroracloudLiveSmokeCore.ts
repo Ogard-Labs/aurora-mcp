@@ -20,6 +20,18 @@ type LiveSmokeDependencies = ReadOnlyDispatcher & {
 
 export const LIVE_SMOKE_TOOL_NAMES = ['list_workspaces', 'get_project_context'] as const
 
+/**
+ * Read-only tools the extended smoke also calls (#49), each with the result
+ * type that proves AuroraCloud still answers in the shape the server reads.
+ * They run only with AURORA_SMOKE_EXTENDED=1, as the scheduled drift job does.
+ */
+export const EXTENDED_SMOKE_CHECKS = [
+  { tool: 'list_task_lists', input: {}, resultType: 'task_lists' },
+  { tool: 'list_task_statuses', input: {}, resultType: 'task_statuses' },
+  { tool: 'list_objects', input: { limit: 5 }, resultType: 'objects' },
+  { tool: 'wiki_search', input: { query: 'aurora', limit: 3 }, resultType: 'knowledge_sources' },
+] as const
+
 type LiveSmokeOptions = {
   env?: NodeJS.ProcessEnv | Record<string, string | undefined>
   loadDependencies?: () => Promise<LiveSmokeDependencies>
@@ -64,6 +76,19 @@ export async function runLiveSmoke(options: LiveSmokeOptions = {}): Promise<void
   const discovered = await executeReadOnlyTool(dependencies, LIVE_SMOKE_TOOL_NAMES[0], {}, context)
   if (discovered.type !== 'workspaces' || !Array.isArray(discovered['workspaces'])) {
     throw new Error(`AuroraCloud MCP live smoke could not list granted workspaces: ${failureSummary(discovered)}`)
+  }
+
+  if (optionalEnv(env, 'AURORA_SMOKE_EXTENDED') === '1') {
+    const workspaceId = selectSmokeWorkspace(env, context, discovered['workspaces'])
+    for (const check of EXTENDED_SMOKE_CHECKS) {
+      if (!tools.some((tool) => tool.name === check.tool)) {
+        throw new Error(`AuroraCloud MCP live smoke could not find required tool: ${check.tool}`)
+      }
+      const result = await executeReadOnlyTool(dependencies, check.tool, { workspace_id: workspaceId, ...check.input }, context)
+      if (result.type !== check.resultType) {
+        throw new Error(`AuroraCloud MCP live smoke ${check.tool} failed: ${failureSummary(result)}`)
+      }
+    }
   }
 
   const projectId = optionalEnv(env, 'AURORA_SMOKE_PROJECT_ID')

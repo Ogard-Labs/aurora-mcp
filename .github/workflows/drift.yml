@@ -1,0 +1,114 @@
+name: AuroraCloud drift
+
+# Weekly, and on demand: checks that every AuroraCloud data shape this server
+# relies on (src/auroraContract.ts) is still defined the same way in
+# Ogard-Labs/auroradocs, and runs the extended read-only live smoke (#49).
+# Failures open or update one "AuroraCloud drift detected" issue.
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    environment: production-smoke
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.30.3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # A GitHub App installed on Ogard-Labs/auroradocs with read-only Contents
+      # access. Its token lasts one hour and belongs to no person.
+      - name: Get a read-only token for auroradocs
+        id: auroradocs-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.AURORADOCS_READER_APP_ID }}
+          private-key: ${{ secrets.AURORADOCS_READER_PRIVATE_KEY }}
+          owner: Ogard-Labs
+          repositories: auroradocs
+          permission-contents: read
+
+      - name: Check out auroradocs main, read-only
+        uses: actions/checkout@v7
+        with:
+          repository: Ogard-Labs/auroradocs
+          ref: main
+          path: auroradocs
+          token: ${{ steps.auroradocs-token.outputs.token }}
+          persist-credentials: false
+          sparse-checkout: |
+            packages/core/src/lib
+            apps/api/src
+            package.json
+          sparse-checkout-cone-mode: true
+
+      - name: Check the AuroraCloud contract
+        id: contract
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          node --import tsx scripts/auroraDrift.mjs --auroradocs auroradocs | tee drift-report.txt
+
+      - name: Run the extended read-only live smoke
+        id: smoke
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          pnpm auroracloud-live-smoke 2>&1 | tee smoke-report.txt
+        env:
+          AURORA_API_URL: ${{ secrets.AURORA_API_URL }}
+          AURORA_WORKSPACE_ID: ${{ secrets.AURORA_WORKSPACE_ID }}
+          AURORA_API_TOKEN: ${{ secrets.AURORA_API_TOKEN }}
+          AURORA_SMOKE_WORKSPACE_ID: ${{ vars.AURORA_SMOKE_WORKSPACE_ID }}
+          AURORA_SMOKE_EXTENDED: '1'
+
+      - name: Open or update the drift issue
+        if: steps.contract.outcome == 'failure' || steps.smoke.outcome == 'failure'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('node:fs')
+            const read = (file) => fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim() : '(no output)'
+            const title = 'AuroraCloud drift detected'
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            // The smoke report never holds workspace records (scripts/auroracloudLiveSmoke.test.mjs checks this).
+            const body = [
+              `The scheduled drift check failed on ${new Date().toISOString().slice(0, 10)}. Run: ${run}`,
+              '',
+              `**Contract check:** ${'${{ steps.contract.outcome }}'}`,
+              '```', read('drift-report.txt'), '```',
+              `**Extended live smoke:** ${'${{ steps.smoke.outcome }}'}`,
+              '```', read('smoke-report.txt').slice(-4000), '```',
+            ].join('\n')
+            const { data: open } = await github.rest.issues.listForRepo({ ...context.repo, state: 'open', per_page: 100 })
+            const existing = open.find((issue) => issue.title === title && !issue.pull_request)
+            if (existing) {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: existing.number, body })
+            } else {
+              await github.rest.issues.create({ ...context.repo, title, body })
+            }
+            core.setFailed('AuroraCloud drift detected; see the issue.')
