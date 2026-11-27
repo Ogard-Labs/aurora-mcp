@@ -348,3 +348,17 @@ test('a route template after a tag such as String.raw still matches (#49 review)
   const text = `const path = String.raw${route.source}\n`
   assert.deepEqual(await checkDrift([route], '/checkout', async () => text), [])
 })
+
+test('a slash after an object literal divides, and after a block starts a regex (#49 review)', async () => {
+  const version = AURORA_CONTRACT.find((entry) => entry.id === 'task-status-config-version')
+  assert.ok(version)
+  for (const object of ['{ valueOf: () => 2 }', '({ a: 1 }).a + { valueOf: () => 2 }', '[{ a: 1 }][0] && { b: 2 }']) {
+    const stale = `const half = ${object} / 2 /* ${version.source}; old */\nexport const TASK_STATUS_CONFIG_VERSION = 2\n`
+    assert.equal((await checkDrift([version], '/checkout', async () => stale)).length, 1, object)
+  }
+  // After a block's `}`, a `/` starts a regex: its `/*` stays and the line comment is blanked.
+  for (const block of ['if (x) { y() }', 'function f() {}', 'const f = () => {}\n', 'try {} finally {}', 'do {} while (x);', '{ }']) {
+    const text = `${block}\n/a\\/*/.test(s) // c`
+    assert.equal(stripComments(text), `${block}\n/a\\/*/.test(s)     `, block)
+  }
+})

@@ -24,6 +24,8 @@ const WORD = new RegExp(NAME, 'u')
 
 const NOT_NAME = String.raw`(?:^|(?!${NAME})[^])`
 const REGEX_AFTER_WORD = new RegExp(String.raw`${NOT_NAME}(?:return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$`, 'u')
+// Keywords after which a `{` opens an object literal (`else {` and `do {` open blocks).
+const OBJECT_AFTER_WORD = new RegExp(String.raw`${NOT_NAME}(?:return|typeof|instanceof|in|of|new|delete|void|throw|case|yield|await)$`, 'u')
 const CONTROL_BEFORE_PAREN = new RegExp(String.raw`${NOT_NAME}(?:if|while|for|with)\s*$`, 'u')
 const NUMBER_DOT = new RegExp(String.raw`(?:^|(?!${NAME}|\.)[^])\d[\d_]*\.\s*$`, 'u')
 const ENDS_WITH_NAME = new RegExp(`${NAME}$`, 'u')
@@ -70,6 +72,10 @@ export function scanSource(source) {
   // condition, after which a `/` starts a regex rather than dividing.
   const parens = []
   let closedControl = false
+  // One entry per open `{` (not `${`): whether it opens an object literal, an
+  // operand, rather than a block. A `/` after the `}` of an object divides.
+  const braces = []
+  let closedObject = false
   // Where the last regex literal ended in `out`, so its closing `/` is not read as a division sign.
   let regexEnd = -1
   const blank = (text) => text.replace(/[^\r\n\u2028\u2029]/g, ' ')
@@ -85,6 +91,12 @@ export function scanSource(source) {
     }
     markLiteral(index, stop)
     take(Math.min(stop + 1, source.length))
+  }
+  const opensObject = () => {
+    const before = out.replace(/\s+$/, '')
+    if (before.endsWith('=>')) return false
+    if (ENDS_WITH_NAME.test(before)) return endsWithKeyword(before, OBJECT_AFTER_WORD)
+    return /[(,=:[!&|?+\-*%<>~^]$/.test(before)
   }
   const regexMayStart = () => {
     const before = out.replace(/\s+$/, '')
@@ -104,6 +116,7 @@ export function scanSource(source) {
     }
     // A `/` that divides is an operator, so a regex may follow; the closing `/` of a regex is not one.
     if (before.endsWith('/')) return before.length !== regexEnd
+    if (before.endsWith('}')) return !closedObject
     return /[(,=:[!&|?{};+\-*%<>~^]$/.test(before)
   }
   while (index < source.length) {
@@ -127,8 +140,9 @@ export function scanSource(source) {
     } else if (char === '`') {
       take(index + 1)
       readTemplate()
-    } else if (char === '{' && interpolations.length) {
-      interpolations[interpolations.length - 1] += 1
+    } else if (char === '{') {
+      braces.push(opensObject())
+      if (interpolations.length) interpolations[interpolations.length - 1] += 1
       take(index + 1)
     } else if (char === '}' && interpolations.length) {
       take(index + 1)
@@ -137,7 +151,11 @@ export function scanSource(source) {
         readTemplate()
       } else {
         interpolations[interpolations.length - 1] -= 1
+        closedObject = braces.pop() ?? false
       }
+    } else if (char === '}') {
+      closedObject = braces.pop() ?? false
+      take(index + 1)
     } else if (char === '(') {
       parens.push(endsWithKeyword(out, CONTROL_BEFORE_PAREN))
       take(index + 1)
