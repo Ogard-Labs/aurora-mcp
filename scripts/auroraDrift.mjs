@@ -291,7 +291,7 @@ export function findInCode(raw, needle, literal, statement = false) {
     const inCode = (!literal || literal[start] === 0) && literalsExact(raw, start, match[1].length, needle, literal)
     // An entry that is one whole string or template is an operand: the code after it must not go on with
     // the value (`'/route' + '/v2'` is another route).
-    if (inCode && !statement && (!wholeLiteral(needle) || !continuesOperand(raw.slice(match.index + match[0].length)))) return true
+    if (inCode && !statement && (!wholeLiteral(needle) || (!joinsOperandBefore(raw.slice(0, start)) && !continuesOperand(raw.slice(match.index + match[0].length))))) return true
     const tail = /^(?:[ \t]|\/\*(?:[^*\n]|\*(?!\/))*\*\/)*(?:([;}])|(?:\/\/[^\n]*)?(?:\r?\n|$))/.exec(raw.slice(match.index + match[0].length))
     if (inCode && tail && (tail[1] || !continuesExpression(raw.slice(match.index + match[0].length + tail[0].length)))) return true
     // Step one whole code point, so a search never restarts inside a surrogate pair (which the `u` flag would read back to the same match).
@@ -334,6 +334,13 @@ function wholeLiteral(needle) {
     else if (needle[i] === quote) return false
   }
   return true
+}
+
+/** Whether code that ends `before` (comments are already blanked) joins an operator to the operand after it. `=>` does not. */
+function joinsOperandBefore(before) {
+  const code = before.replace(/\s+$/, '')
+  if (code.endsWith('=>')) return false
+  return /[+\-*/%&|^<>?]$/.test(code) || new RegExp(String.raw`(?:^|(?!${NAME})[^])(?:in|instanceof)$`, 'u').test(code)
 }
 
 /** Whether code that starts `rest` (after whitespace and comments) goes on with the operand before it. */

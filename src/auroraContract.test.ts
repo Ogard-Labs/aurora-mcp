@@ -411,7 +411,11 @@ test('a route string that is extended is drift (#49 review)', async () => {
       const text = `app.get(${route.source}${extended}, handler)\n`
       assert.equal((await checkDrift([route], '/checkout', async () => text)).length, 1, `${route.id}${extended}`)
     }
-    for (const kept of [`app.get(${route.source}, handler)`, `const r = ${route.source};`, `[${route.source}]`, `{ path: ${route.source} }`, `f(${route.source} as const)`]) {
+    for (const prefix of [`'/v2' + `, `'/v2' +\n  `, `base /* c */ + `, `flag ? `, `x || `]) {
+      const text = `app.get(${prefix}${route.source}, handler)\n`
+      assert.equal((await checkDrift([route], '/checkout', async () => text)).length, 1, `${prefix}${route.id}`)
+    }
+    for (const kept of [`app.get(${route.source}, handler)`, `const r = ${route.source};`, `[${route.source}]`, `{ path: ${route.source} }`, `f(${route.source} as const)`, `const r = () => ${route.source}`, `return ${route.source}`]) {
       assert.deepEqual(await checkDrift([route], '/checkout', async () => `${kept}\n`), [], `${route.id}: ${kept}`)
     }
   }
