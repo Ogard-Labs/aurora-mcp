@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Tool annotations now tell clients which tools replace or remove data
+  (#51). `set_content`, `update_object`, `update_object_title`,
+  `set_property`, `update_task` and `schedule_task_block` are marked
+  destructive, as `delete_object` already was, so clients that confirm
+  destructive calls ask before they run. So are `create_template`,
+  `create_from_template`, `update_object_type` and
+  `apply_custom_database_plan`: a reused template or object ID rewrites its
+  content and property values, and a type update can rename a type or clear
+  its icon or colour. Tools that only add
+  (`create_object`, `create_task`, `append_block`, `restore_object` and the
+  Obsidian import) are not.
+- `openWorldHint` is now `false` for every tool: each one works on the
+  person's own Aurora workspace or local vault, not the open web.
+
 ## [0.4.0] - 2026-10-29
 
 ### Changed

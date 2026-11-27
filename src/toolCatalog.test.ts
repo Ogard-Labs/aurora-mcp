@@ -243,7 +243,11 @@ test('MCP tool catalog authoritatively classifies every registered tool effect',
 })
 
 test('every tool declares output schema and accurate effect annotations', () => {
-  const localTools = new Set(['list_workspaces', 'get_mcp_tool_coverage', 'get_mcp_workflow_recipes', 'get_custom_database_recipes', 'analyze_obsidian_vault', 'get_obsidian_import_plan', 'import_obsidian_vault', 'get_obsidian_import_status'])
+  // #51: the tools that replace or remove existing data; additive tools are not destructive.
+  const destructiveTools = new Set([
+    'delete_object', 'set_content', 'update_object', 'update_object_title', 'set_property', 'update_task', 'schedule_task_block',
+    'create_template', 'create_from_template', 'update_object_type', 'apply_custom_database_plan',
+  ])
   const nonIdempotentTools = new Set(['schedule_task_block', 'create_object', 'create_task', 'append_block', 'create_template', 'create_from_template', 'import_obsidian_vault'])
   const successResultTypes: Record<string, string[]> = {
     list_workspaces: ['workspaces'],
@@ -300,9 +304,9 @@ test('every tool declares output schema and accurate effect annotations', () => 
     assert.equal(typeof tool.annotations.idempotentHint, 'boolean')
     assert.equal(typeof tool.annotations.openWorldHint, 'boolean')
     assert.equal(tool.annotations.readOnlyHint, isReadOnly, `${tool.name} readOnlyHint`)
-    assert.equal(tool.annotations.destructiveHint, tool.name === 'delete_object', `${tool.name} destructiveHint`)
+    assert.equal(tool.annotations.destructiveHint, destructiveTools.has(tool.name), `${tool.name} destructiveHint`)
     assert.equal(tool.annotations.idempotentHint, !nonIdempotentTools.has(tool.name), `${tool.name} idempotentHint`)
-    assert.equal(tool.annotations.openWorldHint, !localTools.has(tool.name), `${tool.name} openWorldHint`)
+    assert.equal(tool.annotations.openWorldHint, false, `${tool.name} openWorldHint`)
 
     const variants = tool.outputSchema.oneOf ?? []
     assert.ok(variants.some((variant) => variant.properties?.['type']?.const === 'error'), `${tool.name} must accept safe errors`)
